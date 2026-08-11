@@ -12,7 +12,9 @@
 
 ## 课程
 
-- **[KV 缓存](kv-cache.md)** — 完整演示 9 段骨架的样板课。
+- **[推理流程：Prefill 与 Decode](inference-flow.md)** — 自回归生成的两个阶段，以及为何 prefill 是 compute-bound 而 decode 是 memory-bound。
+- **[Transformer 的 Infra 视角](transformer-infra.md)** — 把 decoder 层读成成本模型：哪些部件花权重、prefill FLOPs、KV 缓存。
+- **[KV 缓存](kv-cache.md)** — 是什么、为何增长、为何是吞吐上限的核心矛盾。
 
 !!! note "脚手架状态"
-    本学习路径按 Part 逐步搭建。**KV 缓存** 是第一节完整成文的课（票 #2）；Part 0 其余课程与 Part 1–8 会在后续票落地。题库随进度增长，见 [面试题库](../interview/index.md)。
+    本学习路径按 Part 逐步搭建。Part 0A（票 #2、#4）已完整成文——推理流程、Transformer infra 视角、KV 缓存——并附带联动的面试题。Part 0B（度量、数值格式）与 Part 1–8 会在后续票落地。题库随进度增长，见 [面试题库](../interview/index.md)。

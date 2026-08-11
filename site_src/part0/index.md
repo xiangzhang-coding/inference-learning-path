@@ -12,7 +12,9 @@
 
 ## Lessons
 
-- **[KV Cache](kv-cache.md)** — the worked sample lesson demonstrating the full 9-section skeleton.
+- **[Inference Flow: Prefill & Decode](inference-flow.md)** — the two phases of autoregressive generation, and why prefill is compute-bound while decode is memory-bound.
+- **[Transformer, the Infra View](transformer-infra.md)** — read a decoder block as a cost model: which parts cost weights, prefill FLOPs, and KV cache.
+- **[KV Cache](kv-cache.md)** — what it is, why it grows, and why it is the core tension behind the throughput ceiling.
 
 !!! note "Scaffolding status"
-    This learning path is being built part by part. **KV Cache** is the first fully-written lesson (ticket #2); the remaining Part 0 lessons and Parts 1–8 land in later tickets. See the [Interview Bank](../interview/index.md) for the linked question set as it grows.
+    This learning path is being built part by part. Part 0A (tickets #2, #4) is fully written — inference flow, the Transformer infra view, and KV cache — with linked interview questions. Part 0B (metrics, number formats) and Parts 1–8 land in later tickets. See the [Interview Bank](../interview/index.md) for the linked question set as it grows.

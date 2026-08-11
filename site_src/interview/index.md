@@ -7,8 +7,10 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
 ## By module
 
 - **Part 0 · Foundations**
+    - [Prefill vs decode](prefill-vs-decode.md) — which phase is compute- vs memory-bound, and why.
+    - [Attention variants: MHA/MQA/GQA](attention-variants.md) — how KV heads set the KV cache and the throughput ceiling.
     - [KV cache & throughput ceiling](kv-cache.md) — why the KV cache, not compute, is usually the bottleneck.
 - **Parts 1–8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    This is the first bank entry (ticket #2), demonstrating the schema and the two-way link with **[KV Cache](../part0/kv-cache.md)**. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 questions (tickets #2, #4) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
