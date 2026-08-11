@@ -1,0 +1,42 @@
+/* ---------------------------------------------------------------------------
+ * KaTeX: nudge inline math to sit on the body baseline; scope size.
+ * ------------------------------------------------------------------------- */
+.katex {
+  font-size: 1.02em;
+}
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * GPU callout — a custom admonition type used at the top of every page/code
+ * block that needs a GPU (spec "GPU 标注约定"). Usage:
+ *
+ *   !!! gpu "GPU Lab"
+ *       - **Min VRAM:** …
+ *       - **Suggested AutoDL card:** …
+ *       - **Est. time / cost:** …
+ *       - **Platform:** NVIDIA CUDA (default)
+ *       - **Non-NVIDIA:** …
+ *
+ * Also works as a collapsible `??? gpu "…"` (pymdownx.details).
+ * ------------------------------------------------------------------------- */
+:root {
+  --md-admonition-icon--gpu: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15 9H9v6h6V9m-2 4h-2v-2h2v2m9-2V9h-2V7a2 2 0 0 0-2-2h-2V3h-2v2h-4V3H8v2H6a2 2 0 0 0-2 2v2H2v2h2v2H2v2h2v2a2 2 0 0 0 2 2h2v2h2v-2h4v2h2v-2h2a2 2 0 0 0 2-2v-2h2v-2h-2v-2h2m-4 6H6V7h12v10Z"/></svg>');
+}
+.md-typeset .admonition.gpu,
+.md-typeset details.gpu {
+  border-color: #43a047;
+}
+.md-typeset .gpu > .admonition-title,
+.md-typeset .gpu > summary {
+  background-color: rgba(67, 160, 71, 0.1);
+}
+.md-typeset .gpu > .admonition-title::before,
+.md-typeset .gpu > summary::before {
+  background-color: #43a047;
+  -webkit-mask-image: var(--md-admonition-icon--gpu);
+  mask-image: var(--md-admonition-icon--gpu);
+}

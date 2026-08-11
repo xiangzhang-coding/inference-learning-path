@@ -1,0 +1,12 @@
+# Build & preview the inference-learning-path site.
+#   python -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt
+#   mkdocs serve            # local preview
+#   mkdocs build --strict   # the one structural gate (ADR-0004 / spec Seam A)
+#
+# Stack rationale lives in docs/adr/0003-site-architecture.md.
+
+mkdocs-material>=9.5,<10      # MkDocs Material theme (nav, search, admonitions, code)
+mkdocs-static-i18n>=1.2,<2    # bilingual suffix structure: page.md (en) / page.zh.md (zh)
+pymdown-extensions>=10.0      # arithmatex (KaTeX), superfences, tabs, details, etc.
+jieba>=0.42                   # Chinese word segmentation for Material search (lang: zh)

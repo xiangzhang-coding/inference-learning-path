@@ -7,6 +7,9 @@
 # MkDocs build output
 site/
 
+# local-only project memory (never push)
+CLAUDE.md
+
 # Python
 __pycache__/
 *.pyc

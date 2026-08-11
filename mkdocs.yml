@@ -1,0 +1,134 @@
+# mkdocs.yml — inference-learning-path
+# Architecture rationale: docs/adr/0003-site-architecture.md
+# vLLM version policy:     docs/adr/0004-vllm-version-policy.md
+#
+# The one structural gate (spec Seam A): `mkdocs build --strict`
+# strict turns broken links / orphan pages / missing nav / i18n errors into build failures.
+
+site_name: Inference Infra Learning Path
+site_description: A bilingual, beginner-friendly path to LLM inference infra — maximizing vLLM concurrency and backend throughput.
+site_author: xiangzhang-coding
+site_url: https://inference-learning-path.pages.dev/   # Cloudflare Pages root deploy (deferred; see ADR-0003)
+repo_url: https://github.com/xiangzhang-coding/inference-learning-path
+repo_name: inference-learning-path
+copyright: CC BY-SA 4.0
+
+# ADR-0003: repo meta (CONTEXT.md, docs/adr, docs/spec) lives OUTSIDE site_src and is never published.
+docs_dir: site_src
+
+# Explicit nav — every page appears exactly once (strict fails on orphans / missing entries).
+# Nav titles here are the English source; Chinese titles come from i18n nav_translations below.
+nav:
+  - Home: index.md
+  - "Part 0 · Foundations & Motivation":
+      - part0/index.md
+      - "KV Cache": part0/kv-cache.md
+  - "Part 1 · Transformer (Infra View)": part1/index.md
+  - "Part 2 · Single-GPU Inference Performance": part2/index.md
+  - "Part 3 · GPU Programming (Triton)": part3/index.md
+  - "Part 4 · Quantization": part4/index.md
+  - "Part 5 · Serving & Throughput (vLLM Core)": part5/index.md
+  - "Part 6 · Advanced Inference Topics": part6/index.md
+  - "Part 7 · Multi-GPU & Distributed": part7/index.md
+  - "Part 8 · Production & System Design": part8/index.md
+  - "Interview Bank":
+      - interview/index.md
+      - "KV cache & throughput ceiling": interview/kv-cache.md
+  - Capstone: capstone/index.md
+  - Glossary: glossary.md
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.indexes      # section landing pages (partN/index.md)
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    # NOTE: navigation.instant is intentionally OFF — it breaks the language switcher
+    #       and stops KaTeX/JS from re-running on page change (ADR-0003).
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search:
+      lang:
+        - en
+        - zh          # Chinese full-text search; Material segments with jieba when installed (ADR-0003)
+  - i18n:
+      docs_structure: suffix       # page.md = en (default/fallback), page.zh.md = zh translation
+      fallback_to_default: true    # missing zh page falls back to the English default
+      reconfigure_material: true   # auto-build the top-of-page language switcher
+      reconfigure_search: true     # per-language search index
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: zh
+          name: 简体中文
+          build: true
+          site_name: LLM 推理 Infra 学习路径
+          nav_translations:
+            Home: 首页
+            "Part 0 · Foundations & Motivation": "Part 0 · 基础与动机"
+            "KV Cache": "KV 缓存"
+            "Part 1 · Transformer (Infra View)": "Part 1 · Transformer（Infra 视角）"
+            "Part 2 · Single-GPU Inference Performance": "Part 2 · 单卡推理性能"
+            "Part 3 · GPU Programming (Triton)": "Part 3 · GPU 编程（Triton）"
+            "Part 4 · Quantization": "Part 4 · 量化"
+            "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
+            "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
+            "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
+            "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
+            "Interview Bank": "面试题库"
+            "KV cache & throughput ceiling": "KV 缓存与吞吐上限"
+            Capstone: Capstone 实战
+            Glossary: 术语表
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.arithmatex:      # ADR-0003: generic mode + KaTeX
+      generic: true
+
+extra_css:
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
+  - assets/stylesheets/extra.css
+
+extra_javascript:
+  - assets/javascripts/lang-redirect.js       # browser-language auto-redirect (session-debounced)
+  - assets/javascripts/katex.js               # mounts KaTeX on each page via document$
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js
