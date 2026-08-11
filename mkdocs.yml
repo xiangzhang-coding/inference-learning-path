@@ -34,6 +34,10 @@ nav:
   - "Interview Bank":
       - interview/index.md
       - "KV cache & throughput ceiling": interview/kv-cache.md
+  - "Eval Sets":
+      - eval/index.md
+      - "Small set (~20)": eval/small.md
+      - "Large set": eval/large.md
   - Capstone: capstone/index.md
   - Glossary: glossary.md
 
@@ -100,6 +104,9 @@ plugins:
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
             "Interview Bank": "面试题库"
             "KV cache & throughput ceiling": "KV 缓存与吞吐上限"
+            "Eval Sets": "评测集"
+            "Small set (~20)": "小评测集（~20）"
+            "Large set": "大评测集"
             Capstone: Capstone 实战
             Glossary: 术语表
 
