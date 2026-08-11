@@ -25,6 +25,9 @@ nav:
       - "Inference Flow: Prefill & Decode": part0/inference-flow.md
       - "Transformer, the Infra View": part0/transformer-infra.md
       - "KV Cache": part0/kv-cache.md
+      - "GPU Hardware Mental Model": part0/gpu-hardware.md
+      - "Inference Performance Metrics": part0/metrics.md
+      - "Number Formats: FP16 to INT4": part0/number-formats.md
   - "Part 1 · Transformer (Infra View)": part1/index.md
   - "Part 2 · Single-GPU Inference Performance": part2/index.md
   - "Part 3 · GPU Programming (Triton)": part3/index.md
@@ -38,6 +41,9 @@ nav:
       - "Prefill vs decode": interview/prefill-vs-decode.md
       - "Attention variants: MHA/MQA/GQA": interview/attention-variants.md
       - "KV cache & throughput ceiling": interview/kv-cache.md
+      - "GPU memory hierarchy & roofline": interview/gpu-memory-hierarchy.md
+      - "Latency vs throughput metrics": interview/latency-throughput-metrics.md
+      - "Number formats & precision": interview/number-formats.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -100,6 +106,9 @@ plugins:
             "Inference Flow: Prefill & Decode": "推理流程：Prefill 与 Decode"
             "Transformer, the Infra View": "Transformer 的 Infra 视角"
             "KV Cache": "KV 缓存"
+            "GPU Hardware Mental Model": "GPU 硬件心智模型"
+            "Inference Performance Metrics": "推理性能度量"
+            "Number Formats: FP16 to INT4": "数值格式：FP16 到 INT4"
             "Part 1 · Transformer (Infra View)": "Part 1 · Transformer（Infra 视角）"
             "Part 2 · Single-GPU Inference Performance": "Part 2 · 单卡推理性能"
             "Part 3 · GPU Programming (Triton)": "Part 3 · GPU 编程（Triton）"
@@ -112,6 +121,9 @@ plugins:
             "Prefill vs decode": "Prefill vs Decode"
             "Attention variants: MHA/MQA/GQA": "注意力变体：MHA/MQA/GQA"
             "KV cache & throughput ceiling": "KV 缓存与吞吐上限"
+            "GPU memory hierarchy & roofline": "GPU 内存层级与 roofline"
+            "Latency vs throughput metrics": "延迟与吞吐度量"
+            "Number formats & precision": "数值格式与精度"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
