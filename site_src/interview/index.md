@@ -40,7 +40,9 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
     - [Multi-LoRA serving: one base, many adapters](multi-lora-serving.md) — why a LoRA adapter is tiny, how vLLM batches heterogeneous adapters via grouped GEMM, and the knobs (`max_lora_rank`, `max_loras`, dynamic loading) that cap how many you can co-serve.
     - [Guided / structured decoding](structured-decoding.md) — how a schema becomes a per-step logit mask, why the guarantee is hard rather than statistical, its cost, and why it fixes shape but never truth.
     - [Long-context inference: positions, sinks & the KV wall](long-context-inference.md) — why models break past training length and how RoPE scaling (PI/NTK/YaRN) fixes it, what the attention sink is, and why the KV cache — not compute — is the long-context ceiling.
-- **Parts 1, 7–8** — questions land alongside their lessons in later tickets.
+- **Part 7 · Multi-GPU & Distributed**
+    - [Parallelism: TP/PP/DP/EP & when to use each](parallelism-strategies.md) — the two reasons to parallelize, what each of TP/PP/DP/EP splits and costs to communicate, why TP stays within a node while PP crosses them, and how to pick a strategy from model size and topology.
+- **Parts 1, 8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), and Part 6 (tickets #15, #16) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), Part 6 (tickets #15, #16), and the first Part 7 question (ticket #17) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
