@@ -18,7 +18,10 @@
     - [显存预算与最大并发](vram-capacity-planning.md) — 走一遍完整显存预算、估最大并发；达到并发目标的旋钮。
     - [FlashAttention 与 IO-aware attention](flash-attention.md) — 同 FLOPs 为何更快、online softmax、以及它在哪帮得上/帮不上。
     - [CUDA graphs 与 kernel fusion](cuda-graphs-fusion.md) — decode 启动开销、为何伤 decode 而非 prefill、`enforce_eager` 权衡什么。
-- **Part 1、3–8** — 各题随对应课程在后续票落地。
+- **Part 3 · GPU 编程（Triton）**
+    - [CUDA 执行模型：warp、SIMT 与 occupancy](cuda-execution-model.md) — 什么是 warp、SIMT divergence 的代价，以及为何拉满 occupancy 未必更快。
+    - [Memory coalescing、shared memory 与 bank conflict](memory-coalescing.md) — 什么让一次访问 coalesced、uncoalesced 的代价，以及 shared memory 与 bank conflict 是什么。
+- **Part 1、4–8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）与 Part 2（票 #6、#7）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）与 Part 3（票 #8）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
