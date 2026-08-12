@@ -29,7 +29,10 @@ nav:
       - "Inference Performance Metrics": part0/metrics.md
       - "Number Formats: FP16 to INT4": part0/number-formats.md
   - "Part 1 · Transformer (Infra View)": part1/index.md
-  - "Part 2 · Single-GPU Inference Performance": part2/index.md
+  - "Part 2 · Single-GPU Inference Performance":
+      - part2/index.md
+      - "Operator Roofline: GEMM & Attention Intensity": part2/roofline-analysis.md
+      - "KV Cache Memory Math": part2/kv-cache-math.md
   - "Part 3 · GPU Programming (Triton)": part3/index.md
   - "Part 4 · Quantization": part4/index.md
   - "Part 5 · Serving & Throughput (vLLM Core)": part5/index.md
@@ -44,6 +47,8 @@ nav:
       - "GPU memory hierarchy & roofline": interview/gpu-memory-hierarchy.md
       - "Latency vs throughput metrics": interview/latency-throughput-metrics.md
       - "Number formats & precision": interview/number-formats.md
+      - "Arithmetic intensity of GEMM & attention": interview/arithmetic-intensity.md
+      - "VRAM budget & max concurrency": interview/vram-capacity-planning.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -111,6 +116,8 @@ plugins:
             "Number Formats: FP16 to INT4": "数值格式：FP16 到 INT4"
             "Part 1 · Transformer (Infra View)": "Part 1 · Transformer（Infra 视角）"
             "Part 2 · Single-GPU Inference Performance": "Part 2 · 单卡推理性能"
+            "Operator Roofline: GEMM & Attention Intensity": "算子 Roofline：GEMM 与 Attention 强度"
+            "KV Cache Memory Math": "KV 缓存显存数学"
             "Part 3 · GPU Programming (Triton)": "Part 3 · GPU 编程（Triton）"
             "Part 4 · Quantization": "Part 4 · 量化"
             "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
@@ -124,6 +131,8 @@ plugins:
             "GPU memory hierarchy & roofline": "GPU 内存层级与 roofline"
             "Latency vs throughput metrics": "延迟与吞吐度量"
             "Number formats & precision": "数值格式与精度"
+            "Arithmetic intensity of GEMM & attention": "GEMM 与 attention 的算术强度"
+            "VRAM budget & max concurrency": "显存预算与最大并发"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"

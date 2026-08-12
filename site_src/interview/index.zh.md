@@ -13,7 +13,10 @@
     - [GPU 内存层级与 roofline](gpu-memory-hierarchy.md) — 走一遍内存层级，用 roofline 解释为何 decode 是 memory-bound。
     - [延迟与吞吐度量](latency-throughput-metrics.md) — TTFT/TPOT/ITL/throughput/goodput，如何测，以及 batch size 的权衡。
     - [数值格式与精度](number-formats.md) — FP16/BF16/FP8/INT8/INT4，范围 vs 精度，以及低比特为何加速 decode。
-- **Part 1–8** — 各题随对应课程在后续票落地。
+- **Part 2 · 单卡推理性能**
+    - [GEMM 与 attention 的算术强度](arithmetic-intensity.md) — 仅凭形状推导一个算子的强度、decode attention 为何与上下文无关、以及越过拐点的 batch。
+    - [显存预算与最大并发](vram-capacity-planning.md) — 走一遍完整显存预算、估最大并发；达到并发目标的旋钮。
+- **Part 1、3–8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0 题目（票 #2、#4、#5）已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）与 Part 2（票 #6）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。

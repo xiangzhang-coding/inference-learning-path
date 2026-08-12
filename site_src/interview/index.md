@@ -13,7 +13,10 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
     - [GPU memory hierarchy & roofline](gpu-memory-hierarchy.md) — walk the memory tiers and use the roofline to explain why decode is memory-bound.
     - [Latency vs throughput metrics](latency-throughput-metrics.md) — TTFT/TPOT/ITL/throughput/goodput, how to measure, and the batch-size trade.
     - [Number formats & precision](number-formats.md) — FP16/BF16/FP8/INT8/INT4, range vs precision, and why low-bit speeds up decode.
-- **Parts 1–8** — questions land alongside their lessons in later tickets.
+- **Part 2 · Single-GPU Inference Performance**
+    - [Arithmetic intensity of GEMM & attention](arithmetic-intensity.md) — derive an operator's intensity from its shapes, why decode attention is context-independent, and the batch that crosses the ridge.
+    - [VRAM budget & max concurrency](vram-capacity-planning.md) — walk the full VRAM budget and size max concurrency; the knobs that hit a concurrency target.
+- **Parts 1, 3–8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 questions (tickets #2, #4, #5) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5) and Part 2 (ticket #6) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
