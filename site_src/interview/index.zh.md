@@ -23,7 +23,10 @@
     - [Memory coalescing、shared memory 与 bank conflict](memory-coalescing.md) — 什么让一次访问 coalesced、uncoalesced 的代价，以及 shared memory 与 bank conflict 是什么。
     - [Triton 编程模型](triton-programming.md) — 一个 Triton program 映射到什么、`program_id`/offset/mask、FP32 累加，以及何时选 Triton。
     - [PagedAttention kernel 与 block table](paged-attention-kernel.md) — 为何 KV 存成块、block table 做什么、kernel 如何 gather KV，以及它为何等于稠密 attention。
-- **Part 1、4–8** — 各题随对应课程在后续票落地。
+- **Part 4 · 量化**
+    - [量化：为何加速推理](quantization-basics.md) — 量化为何提吞吐（内存、非计算）、仿射映射，以及误差被什么界住。
+    - [量化方案：粒度、对称性、PTQ/QAT](quantization-schemes.md) — per-tensor/channel/group、对称 vs 非对称、W4A16 vs W8A8，以及为何推理用 PTQ。
+- **Part 1、5–8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）与 Part 3（票 #8、#9）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）与 Part 4（票 #10）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。

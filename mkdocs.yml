@@ -41,7 +41,10 @@ nav:
       - "Memory Access: Coalescing, Shared Memory, Bank Conflicts": part3/memory-access.md
       - "Triton: Writing Your First GPU Kernels": part3/triton-basics.md
       - "Reading vLLM's PagedAttention Kernel": part3/paged-attention-kernel.md
-  - "Part 4 · Quantization": part4/index.md
+  - "Part 4 · Quantization":
+      - part4/index.md
+      - "Quantization Basics: the Affine Map & Precision Trade-off": part4/quantization-basics.md
+      - "Quantization Choices: Granularity, Symmetry, PTQ vs QAT": part4/quantization-schemes.md
   - "Part 5 · Serving & Throughput (vLLM Core)": part5/index.md
   - "Part 6 · Advanced Inference Topics": part6/index.md
   - "Part 7 · Multi-GPU & Distributed": part7/index.md
@@ -62,6 +65,8 @@ nav:
       - "Memory coalescing, shared memory & bank conflicts": interview/memory-coalescing.md
       - "Triton programming model": interview/triton-programming.md
       - "PagedAttention kernel & block tables": interview/paged-attention-kernel.md
+      - "Quantization: why it speeds up inference": interview/quantization-basics.md
+      - "Quantization schemes: granularity, symmetry, PTQ/QAT": interview/quantization-schemes.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -139,6 +144,8 @@ plugins:
             "Triton: Writing Your First GPU Kernels": "Triton：写你的第一个 GPU kernel"
             "Reading vLLM's PagedAttention Kernel": "读 vLLM 的 PagedAttention kernel"
             "Part 4 · Quantization": "Part 4 · 量化"
+            "Quantization Basics: the Affine Map & Precision Trade-off": "量化基础：仿射映射与精度权衡"
+            "Quantization Choices: Granularity, Symmetry, PTQ vs QAT": "量化的选择：粒度、对称性、PTQ vs QAT"
             "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
@@ -158,6 +165,8 @@ plugins:
             "Memory coalescing, shared memory & bank conflicts": "Memory coalescing、shared memory 与 bank conflict"
             "Triton programming model": "Triton 编程模型"
             "PagedAttention kernel & block tables": "PagedAttention kernel 与 block table"
+            "Quantization: why it speeds up inference": "量化：为何加速推理"
+            "Quantization schemes: granularity, symmetry, PTQ/QAT": "量化方案：粒度、对称性、PTQ/QAT"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
