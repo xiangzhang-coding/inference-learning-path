@@ -211,7 +211,7 @@ Further reading:
 - Kwon et al. — *Efficient Memory Management for LLM Serving with PagedAttention* (the vLLM paper) — the virtual-memory framing and the fragmentation numbers.
 - vLLM `docs/design/paged_attention.md` — the kernel walkthrough this lesson maps to; read it with §3 open.
 - The [FlashAttention](../part2/flash-attention.md) lesson — the online-softmax accumulation the block loop reuses.
-- Part 5 (serving) — where continuous batching, the block manager, and prefix caching turn this kernel into throughput.
+- Part 5 (serving) — where [continuous batching](../part5/continuous-batching.md), the [block manager](../part5/paged-attention.md), and prefix caching turn this kernel into throughput.
 
 ## 9 · Self-check
 

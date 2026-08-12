@@ -47,7 +47,10 @@ nav:
       - "Quantization Choices: Granularity, Symmetry, PTQ vs QAT": part4/quantization-schemes.md
       - "Quantization Method Families: GPTQ/AWQ/SmoothQuant/FP8": part4/quantization-methods.md
       - "Hands-On: Quantize Qwen2.5-7B to INT4 in vLLM": part4/quantization-lab.md
-  - "Part 5 · Serving & Throughput (vLLM Core)": part5/index.md
+  - "Part 5 · Serving & Throughput (vLLM Core)":
+      - part5/index.md
+      - "From Static to Continuous Batching": part5/continuous-batching.md
+      - "PagedAttention: KV Cache as Virtual Memory": part5/paged-attention.md
   - "Part 6 · Advanced Inference Topics": part6/index.md
   - "Part 7 · Multi-GPU & Distributed": part7/index.md
   - "Part 8 · Production & System Design": part8/index.md
@@ -71,6 +74,8 @@ nav:
       - "Quantization schemes: granularity, symmetry, PTQ/QAT": interview/quantization-schemes.md
       - "Quantization methods: GPTQ/AWQ/SmoothQuant/FP8": interview/quantization-methods.md
       - "Quantizing & serving in practice": interview/quantization-serving.md
+      - "Static vs continuous batching": interview/continuous-batching.md
+      - "PagedAttention: block manager & fragmentation": interview/kv-cache-block-manager.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -153,6 +158,8 @@ plugins:
             "Quantization Method Families: GPTQ/AWQ/SmoothQuant/FP8": "量化方法族：GPTQ/AWQ/SmoothQuant/FP8"
             "Hands-On: Quantize Qwen2.5-7B to INT4 in vLLM": "动手：把 Qwen2.5-7B 量化成 INT4 并在 vLLM 里跑"
             "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
+            "From Static to Continuous Batching": "从 Static 到 Continuous Batching"
+            "PagedAttention: KV Cache as Virtual Memory": "PagedAttention：KV Cache 即虚拟内存"
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
@@ -175,6 +182,8 @@ plugins:
             "Quantization schemes: granularity, symmetry, PTQ/QAT": "量化方案：粒度、对称性、PTQ/QAT"
             "Quantization methods: GPTQ/AWQ/SmoothQuant/FP8": "量化方法：GPTQ/AWQ/SmoothQuant/FP8"
             "Quantizing & serving in practice": "实操量化与服务"
+            "Static vs continuous batching": "Static vs Continuous Batching"
+            "PagedAttention: block manager & fragmentation": "PagedAttention：block manager 与碎片"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"

@@ -211,7 +211,7 @@ max abs diff = 1.11e-16   (paged == dense; blocks are just storage)
 - Kwon 等 —— *Efficient Memory Management for LLM Serving with PagedAttention*（vLLM 论文）—— 虚拟内存框架与碎片数字。
 - vLLM `docs/design/paged_attention.md` —— 本课映射的 kernel 走读；开着 §3 一起读。
 - [FlashAttention](../part2/flash-attention.md) 课 —— 块循环复用的 online-softmax 累加。
-- Part 5（服务）—— continuous batching、block manager、prefix caching 把这个 kernel 变成吞吐的地方。
+- Part 5（服务）—— [continuous batching](../part5/continuous-batching.md)、[block manager](../part5/paged-attention.md)、prefix caching 把这个 kernel 变成吞吐的地方。
 
 ## 9 · 自测小问
 

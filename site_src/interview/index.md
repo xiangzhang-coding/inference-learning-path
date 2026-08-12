@@ -28,7 +28,10 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
     - [Quantization schemes: granularity, symmetry, PTQ/QAT](quantization-schemes.md) — per-tensor/channel/group, symmetric vs asymmetric, W4A16 vs W8A8, and why inference uses PTQ.
     - [Quantization methods: GPTQ/AWQ/SmoothQuant/FP8](quantization-methods.md) — place each method on the axes, its anti-outlier trick, and which to pick for a bottleneck.
     - [Quantizing & serving in practice](quantization-serving.md) — quantize → serve → validate: the tool, the settings, and what to measure.
-- **Parts 1, 5–8** — questions land alongside their lessons in later tickets.
+- **Part 5 · Serving & Throughput (vLLM Core)**
+    - [Static vs continuous batching](continuous-batching.md) — why static batching wastes the GPU, what iteration-level scheduling means, and what actually limits the batch size.
+    - [PagedAttention: block manager & fragmentation](kv-cache-block-manager.md) — why contiguous KV fragments, what the block manager does, how `num_gpu_blocks` is set, and how paging becomes throughput.
+- **Parts 1, 6–8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), and Part 4 (tickets #10, #11) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), and the first Part 5 questions (ticket #12) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.

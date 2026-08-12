@@ -59,5 +59,5 @@ def paged_attention(q, block_table, k_pool, v_pool, seq_len):
 ### 关联概念
 
 - 课程：[读 vLLM 的 PagedAttention kernel](../part3/paged-attention-kernel.md)
-- 相关：[KV 缓存与吞吐上限](kv-cache.md)（被分页的东西）、[显存预算与最大并发](vram-capacity-planning.md)（paging 省回的碎片）、[FlashAttention 与 IO-aware attention](flash-attention.md)（online-softmax 折）、[Memory coalescing、shared memory 与 bank conflict](memory-coalescing.md)（K-cache 的 `x` 打包为何存在）
+- 相关：[KV 缓存与吞吐上限](kv-cache.md)（被分页的东西）、[PagedAttention：block manager 与碎片](kv-cache-block-manager.md)（serving 侧互补——分配与吞吐）、[显存预算与最大并发](vram-capacity-planning.md)（paging 省回的碎片）、[FlashAttention 与 IO-aware attention](flash-attention.md)（online-softmax 折）、[Memory coalescing、shared memory 与 bank conflict](memory-coalescing.md)（K-cache 的 `x` 打包为何存在）
 - 术语表：[PagedAttention、KV cache、Block table](../glossary.md)

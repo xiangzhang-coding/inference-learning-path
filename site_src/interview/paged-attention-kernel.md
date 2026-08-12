@@ -59,5 +59,5 @@ def paged_attention(q, block_table, k_pool, v_pool, seq_len):
 ### Linked concepts
 
 - Lesson: [Reading vLLM's PagedAttention Kernel](../part3/paged-attention-kernel.md)
-- Related: [KV cache & throughput ceiling](kv-cache.md) (what's being paged), [VRAM budget & max concurrency](vram-capacity-planning.md) (the fragmentation paging reclaims), [FlashAttention & IO-aware attention](flash-attention.md) (the online-softmax fold), [Memory coalescing, shared memory & bank conflicts](memory-coalescing.md) (why the K-cache `x` packing exists)
+- Related: [KV cache & throughput ceiling](kv-cache.md) (what's being paged), [PagedAttention: block manager & fragmentation](kv-cache-block-manager.md) (the serving-side complement — allocation & throughput), [VRAM budget & max concurrency](vram-capacity-planning.md) (the fragmentation paging reclaims), [FlashAttention & IO-aware attention](flash-attention.md) (the online-softmax fold), [Memory coalescing, shared memory & bank conflicts](memory-coalescing.md) (why the K-cache `x` packing exists)
 - Glossary: [PagedAttention, KV cache, Block table](../glossary.md)
