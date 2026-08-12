@@ -39,6 +39,8 @@ nav:
       - part3/index.md
       - "CUDA Execution Model: Threads, Warps, Occupancy": part3/cuda-execution-model.md
       - "Memory Access: Coalescing, Shared Memory, Bank Conflicts": part3/memory-access.md
+      - "Triton: Writing Your First GPU Kernels": part3/triton-basics.md
+      - "Reading vLLM's PagedAttention Kernel": part3/paged-attention-kernel.md
   - "Part 4 · Quantization": part4/index.md
   - "Part 5 · Serving & Throughput (vLLM Core)": part5/index.md
   - "Part 6 · Advanced Inference Topics": part6/index.md
@@ -58,6 +60,8 @@ nav:
       - "CUDA graphs & kernel fusion": interview/cuda-graphs-fusion.md
       - "CUDA execution model: warps, SIMT, occupancy": interview/cuda-execution-model.md
       - "Memory coalescing, shared memory & bank conflicts": interview/memory-coalescing.md
+      - "Triton programming model": interview/triton-programming.md
+      - "PagedAttention kernel & block tables": interview/paged-attention-kernel.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -132,6 +136,8 @@ plugins:
             "Part 3 · GPU Programming (Triton)": "Part 3 · GPU 编程（Triton）"
             "CUDA Execution Model: Threads, Warps, Occupancy": "CUDA 执行模型：线程、Warp、Occupancy"
             "Memory Access: Coalescing, Shared Memory, Bank Conflicts": "访存：Coalescing、Shared Memory、Bank Conflict"
+            "Triton: Writing Your First GPU Kernels": "Triton：写你的第一个 GPU kernel"
+            "Reading vLLM's PagedAttention Kernel": "读 vLLM 的 PagedAttention kernel"
             "Part 4 · Quantization": "Part 4 · 量化"
             "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
@@ -150,6 +156,8 @@ plugins:
             "CUDA graphs & kernel fusion": "CUDA graphs 与 kernel fusion"
             "CUDA execution model: warps, SIMT, occupancy": "CUDA 执行模型：warp、SIMT、occupancy"
             "Memory coalescing, shared memory & bank conflicts": "Memory coalescing、shared memory 与 bank conflict"
+            "Triton programming model": "Triton 编程模型"
+            "PagedAttention kernel & block tables": "PagedAttention kernel 与 block table"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"

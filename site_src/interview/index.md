@@ -21,7 +21,9 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
 - **Part 3 · GPU Programming (Triton)**
     - [CUDA execution model: warps, SIMT & occupancy](cuda-execution-model.md) — what a warp is, the cost of SIMT divergence, and why maxing occupancy isn't always faster.
     - [Memory coalescing, shared memory & bank conflicts](memory-coalescing.md) — what makes an access coalesced, what uncoalesced costs, and what shared memory and bank conflicts are.
+    - [Triton programming model](triton-programming.md) — what a Triton program maps to, `program_id`/offsets/masks, FP32 accumulation, and when to reach for Triton.
+    - [PagedAttention kernel & block tables](paged-attention-kernel.md) — why KV lives in blocks, what a block table does, how the kernel gathers KV, and why it equals dense attention.
 - **Parts 1, 4–8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), and Part 3 (ticket #8) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), and Part 3 (tickets #8, #9) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
