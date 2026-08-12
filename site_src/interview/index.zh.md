@@ -26,7 +26,9 @@
 - **Part 4 · 量化**
     - [量化：为何加速推理](quantization-basics.md) — 量化为何提吞吐（内存、非计算）、仿射映射，以及误差被什么界住。
     - [量化方案：粒度、对称性、PTQ/QAT](quantization-schemes.md) — per-tensor/channel/group、对称 vs 非对称、W4A16 vs W8A8，以及为何推理用 PTQ。
+    - [量化方法：GPTQ/AWQ/SmoothQuant/FP8](quantization-methods.md) — 把每个方法放到轴上、它的抗 outlier 巧招，以及为瓶颈选哪个。
+    - [实操量化与服务](quantization-serving.md) — 量化 → 服务 → 验证：工具、设置，以及测什么。
 - **Part 1、5–8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）与 Part 4（票 #10）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）与 Part 4（票 #10、#11）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。

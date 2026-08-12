@@ -45,6 +45,8 @@ nav:
       - part4/index.md
       - "Quantization Basics: the Affine Map & Precision Trade-off": part4/quantization-basics.md
       - "Quantization Choices: Granularity, Symmetry, PTQ vs QAT": part4/quantization-schemes.md
+      - "Quantization Method Families: GPTQ/AWQ/SmoothQuant/FP8": part4/quantization-methods.md
+      - "Hands-On: Quantize Qwen2.5-7B to INT4 in vLLM": part4/quantization-lab.md
   - "Part 5 · Serving & Throughput (vLLM Core)": part5/index.md
   - "Part 6 · Advanced Inference Topics": part6/index.md
   - "Part 7 · Multi-GPU & Distributed": part7/index.md
@@ -67,6 +69,8 @@ nav:
       - "PagedAttention kernel & block tables": interview/paged-attention-kernel.md
       - "Quantization: why it speeds up inference": interview/quantization-basics.md
       - "Quantization schemes: granularity, symmetry, PTQ/QAT": interview/quantization-schemes.md
+      - "Quantization methods: GPTQ/AWQ/SmoothQuant/FP8": interview/quantization-methods.md
+      - "Quantizing & serving in practice": interview/quantization-serving.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -146,6 +150,8 @@ plugins:
             "Part 4 · Quantization": "Part 4 · 量化"
             "Quantization Basics: the Affine Map & Precision Trade-off": "量化基础：仿射映射与精度权衡"
             "Quantization Choices: Granularity, Symmetry, PTQ vs QAT": "量化的选择：粒度、对称性、PTQ vs QAT"
+            "Quantization Method Families: GPTQ/AWQ/SmoothQuant/FP8": "量化方法族：GPTQ/AWQ/SmoothQuant/FP8"
+            "Hands-On: Quantize Qwen2.5-7B to INT4 in vLLM": "动手：把 Qwen2.5-7B 量化成 INT4 并在 vLLM 里跑"
             "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
@@ -167,6 +173,8 @@ plugins:
             "PagedAttention kernel & block tables": "PagedAttention kernel 与 block table"
             "Quantization: why it speeds up inference": "量化：为何加速推理"
             "Quantization schemes: granularity, symmetry, PTQ/QAT": "量化方案：粒度、对称性、PTQ/QAT"
+            "Quantization methods: GPTQ/AWQ/SmoothQuant/FP8": "量化方法：GPTQ/AWQ/SmoothQuant/FP8"
+            "Quantizing & serving in practice": "实操量化与服务"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
