@@ -54,6 +54,8 @@ nav:
       - "The Scheduler: Chunked Prefill & PD Disaggregation": part5/scheduler-chunked-prefill-pd.md
       - "Prefix Caching: Reuse Shared-Prefix KV": part5/prefix-caching.md
       - "Speculative Decoding: Guess Many, Verify Once": part5/speculative-decoding.md
+      - "The vLLM Architecture Map": part5/vllm-architecture-map.md
+      - "Tuning Knobs: Sweeping the Throughput/Latency Curve": part5/tuning-knobs-sweep.md
   - "Part 6 · Advanced Inference Topics": part6/index.md
   - "Part 7 · Multi-GPU & Distributed": part7/index.md
   - "Part 8 · Production & System Design": part8/index.md
@@ -82,6 +84,8 @@ nav:
       - "Chunked prefill & PD disaggregation": interview/chunked-prefill-pd.md
       - "Prefix caching": interview/prefix-caching.md
       - "Speculative decoding": interview/speculative-decoding.md
+      - "Trace a request through vLLM's architecture": interview/vllm-architecture.md
+      - "Tuning knobs: which one for which SLO": interview/tuning-knobs.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -169,6 +173,8 @@ plugins:
             "The Scheduler: Chunked Prefill & PD Disaggregation": "调度器：Chunked Prefill 与 PD 分离"
             "Prefix Caching: Reuse Shared-Prefix KV": "Prefix Caching：复用共享前缀 KV"
             "Speculative Decoding: Guess Many, Verify Once": "Speculative Decoding：猜多个，验一次"
+            "The vLLM Architecture Map": "vLLM 架构地图"
+            "Tuning Knobs: Sweeping the Throughput/Latency Curve": "调参旋钮：扫过吞吐/延迟曲线"
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
@@ -196,6 +202,8 @@ plugins:
             "Chunked prefill & PD disaggregation": "Chunked prefill 与 PD 分离"
             "Prefix caching": "Prefix caching"
             "Speculative decoding": "Speculative decoding"
+            "Trace a request through vLLM's architecture": "追踪一个请求穿过 vLLM 架构"
+            "Tuning knobs: which one for which SLO": "调参旋钮：哪个对哪个 SLO"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"

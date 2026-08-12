@@ -34,7 +34,9 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
     - [Chunked prefill & PD disaggregation](chunked-prefill-pd.md) — why a long prefill stalls decode, what chunked prefill trades, the `max_num_batched_tokens` dial, and when to disaggregate.
     - [Prefix caching](prefix-caching.md) — how block hashing makes reuse safe, why only full blocks cache, when it helps, and why outputs are unchanged.
     - [Speculative decoding](speculative-decoding.md) — guess-and-verify, why it's free only because decode is memory-bound, what sets the speedup, and when it backfires.
+    - [Trace a request through vLLM's architecture](vllm-architecture.md) — the V1 components (API server / engine core / worker), an end-to-end trace, and which optimization lives in which box.
+    - [Tuning knobs: which one for which SLO](tuning-knobs.md) — which knob moves which end of the throughput/latency curve, its trade, and the sweep to run.
 - **Parts 1, 6–8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), and Part 5 (tickets #12, #13) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), and Part 5 (tickets #12, #13, #14) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.

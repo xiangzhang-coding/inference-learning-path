@@ -34,7 +34,9 @@
     - [Chunked prefill 与 PD 分离](chunked-prefill-pd.md) — 为何长 prefill 拖停 decode、chunked prefill 换什么、`max_num_batched_tokens` 旋钮，以及何时分离。
     - [Prefix caching](prefix-caching.md) — 块哈希如何让复用安全、为何只整块缓存、何时有用、以及为何输出不变。
     - [Speculative decoding](speculative-decoding.md) — 猜测-校验、为何只因 decode memory-bound 才免费、什么设定加速、以及何时反噬。
+    - [追踪一个请求穿过 vLLM 架构](vllm-architecture.md) — V1 组件（API server / engine core / worker）、端到端追踪、以及哪个优化住在哪个盒子。
+    - [调参旋钮：哪个对哪个 SLO](tuning-knobs.md) — 哪个旋钮移动吞吐/延迟曲线的哪一端、它的权衡、以及要跑的 sweep。
 - **Part 1、6–8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）与 Part 5（票 #12、#13）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）与 Part 5（票 #12、#13、#14）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
