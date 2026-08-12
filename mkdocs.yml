@@ -51,6 +51,9 @@ nav:
       - part5/index.md
       - "From Static to Continuous Batching": part5/continuous-batching.md
       - "PagedAttention: KV Cache as Virtual Memory": part5/paged-attention.md
+      - "The Scheduler: Chunked Prefill & PD Disaggregation": part5/scheduler-chunked-prefill-pd.md
+      - "Prefix Caching: Reuse Shared-Prefix KV": part5/prefix-caching.md
+      - "Speculative Decoding: Guess Many, Verify Once": part5/speculative-decoding.md
   - "Part 6 · Advanced Inference Topics": part6/index.md
   - "Part 7 · Multi-GPU & Distributed": part7/index.md
   - "Part 8 · Production & System Design": part8/index.md
@@ -76,6 +79,9 @@ nav:
       - "Quantizing & serving in practice": interview/quantization-serving.md
       - "Static vs continuous batching": interview/continuous-batching.md
       - "PagedAttention: block manager & fragmentation": interview/kv-cache-block-manager.md
+      - "Chunked prefill & PD disaggregation": interview/chunked-prefill-pd.md
+      - "Prefix caching": interview/prefix-caching.md
+      - "Speculative decoding": interview/speculative-decoding.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -160,6 +166,9 @@ plugins:
             "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
             "From Static to Continuous Batching": "从 Static 到 Continuous Batching"
             "PagedAttention: KV Cache as Virtual Memory": "PagedAttention：KV Cache 即虚拟内存"
+            "The Scheduler: Chunked Prefill & PD Disaggregation": "调度器：Chunked Prefill 与 PD 分离"
+            "Prefix Caching: Reuse Shared-Prefix KV": "Prefix Caching：复用共享前缀 KV"
+            "Speculative Decoding: Guess Many, Verify Once": "Speculative Decoding：猜多个，验一次"
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
@@ -184,6 +193,9 @@ plugins:
             "Quantizing & serving in practice": "实操量化与服务"
             "Static vs continuous batching": "Static vs Continuous Batching"
             "PagedAttention: block manager & fragmentation": "PagedAttention：block manager 与碎片"
+            "Chunked prefill & PD disaggregation": "Chunked prefill 与 PD 分离"
+            "Prefix caching": "Prefix caching"
+            "Speculative decoding": "Speculative decoding"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"

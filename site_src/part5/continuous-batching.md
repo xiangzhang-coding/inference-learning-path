@@ -80,7 +80,7 @@ You'd think the batch size is limited by compute. It usually isn't. Decode is **
 Two vLLM knobs cap the batch directly:
 
 - **`max_num_seqs`** (default **128**) — the maximum number of sequences in the running set. The batch-*width* ceiling.
-- **`max_num_batched_tokens`** (default **2048**, but the engine auto-tunes it) — the maximum tokens processed in one step, summed across all sequences. This bounds prefill+decode work per iteration (and is the dial that chunked prefill turns — a [Part 5 scheduler](index.md) topic).
+- **`max_num_batched_tokens`** (default **2048**, but the engine auto-tunes it) — the maximum tokens processed in one step, summed across all sequences. This bounds prefill+decode work per iteration (and is the dial that chunked prefill turns — a [Part 5 scheduler](scheduler-chunked-prefill-pd.md) topic).
 
 ### 3.3 Why this is *the* throughput lever
 
@@ -212,7 +212,7 @@ Further reading:
 - Yu et al. — *Orca: A Distributed Serving System for Transformer-Based Generative Models* (OSDI '22) — the paper that introduced iteration-level (continuous) batching.
 - The [PagedAttention lesson](paged-attention.md) — why KV-cache capacity (not compute) usually limits admission, and how paging raises that ceiling.
 - The [inference-flow lesson](../part0/inference-flow.md) — why decode is memory-bound, the premise that makes batching nearly free.
-- Next in Part 5: the [scheduler](index.md) (chunked prefill, PD disaggregation) — how the engine shapes *which* tokens run each step to balance TTFT against throughput.
+- Next in Part 5: the [scheduler](scheduler-chunked-prefill-pd.md) (chunked prefill, PD disaggregation) — how the engine shapes *which* tokens run each step to balance TTFT against throughput.
 
 ## 9 · Self-check
 

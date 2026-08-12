@@ -80,7 +80,7 @@ loop forever:
 两个 vLLM 旋钮直接给批设上限：
 
 - **`max_num_seqs`**（默认 **128**）——运行集里的最大序列数。批*宽度*天花板。
-- **`max_num_batched_tokens`**（默认 **2048**，但引擎会自动调）——一步内处理的最大 token 数（跨所有序列求和）。它约束每迭代的 prefill+decode 工作量（也是 chunked prefill 拧的那个旋钮——属 [Part 5 调度器](index.md) 话题）。
+- **`max_num_batched_tokens`**（默认 **2048**，但引擎会自动调）——一步内处理的最大 token 数（跨所有序列求和）。它约束每迭代的 prefill+decode 工作量（也是 chunked prefill 拧的那个旋钮——属 [Part 5 调度器](scheduler-chunked-prefill-pd.md) 话题）。
 
 ### 3.3 为什么这是*那个*吞吐杠杆
 
@@ -212,7 +212,7 @@ for o in outputs:
 - Yu 等 —— *Orca: A Distributed Serving System for Transformer-Based Generative Models*（OSDI '22）—— 提出迭代级（continuous）batching 的论文。
 - [PagedAttention 课](paged-attention.md) —— 为什么 KV-cache 容量（而非算力）通常限制准入，以及分页如何抬高那道天花板。
 - [推理流程课](../part0/inference-flow.md) —— 为什么 decode 是 memory-bound，这是让 batching 近乎免费的前提。
-- Part 5 下一课：[调度器](index.md)（chunked prefill、PD 分离）—— 引擎如何塑形*每步跑哪些* token，以平衡 TTFT 与吞吐。
+- Part 5 下一课：[调度器](scheduler-chunked-prefill-pd.md)（chunked prefill、PD 分离）—— 引擎如何塑形*每步跑哪些* token，以平衡 TTFT 与吞吐。
 
 ## 9 · 自测小问
 

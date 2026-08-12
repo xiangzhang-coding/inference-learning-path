@@ -31,7 +31,10 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
 - **Part 5 · Serving & Throughput (vLLM Core)**
     - [Static vs continuous batching](continuous-batching.md) — why static batching wastes the GPU, what iteration-level scheduling means, and what actually limits the batch size.
     - [PagedAttention: block manager & fragmentation](kv-cache-block-manager.md) — why contiguous KV fragments, what the block manager does, how `num_gpu_blocks` is set, and how paging becomes throughput.
+    - [Chunked prefill & PD disaggregation](chunked-prefill-pd.md) — why a long prefill stalls decode, what chunked prefill trades, the `max_num_batched_tokens` dial, and when to disaggregate.
+    - [Prefix caching](prefix-caching.md) — how block hashing makes reuse safe, why only full blocks cache, when it helps, and why outputs are unchanged.
+    - [Speculative decoding](speculative-decoding.md) — guess-and-verify, why it's free only because decode is memory-bound, what sets the speedup, and when it backfires.
 - **Parts 1, 6–8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), and the first Part 5 questions (ticket #12) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), and Part 5 (tickets #12, #13) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
