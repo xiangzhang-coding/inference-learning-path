@@ -60,6 +60,7 @@ nav:
       - part6/index.md
       - "Multi-LoRA Serving: One Base, Many Adapters": part6/multi-lora-serving.md
       - "Guided / Structured Decoding: Make Invalid Tokens Impossible": part6/structured-decoding.md
+      - "Long-Context Inference: RoPE Scaling, Attention Sink & the KV Wall": part6/long-context-inference.md
   - "Part 7 · Multi-GPU & Distributed": part7/index.md
   - "Part 8 · Production & System Design": part8/index.md
   - "Interview Bank":
@@ -91,6 +92,7 @@ nav:
       - "Tuning knobs: which one for which SLO": interview/tuning-knobs.md
       - "Multi-LoRA serving: one base, many adapters": interview/multi-lora-serving.md
       - "Guided / structured decoding": interview/structured-decoding.md
+      - "Long-context inference: positions, sinks & the KV wall": interview/long-context-inference.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -183,6 +185,7 @@ plugins:
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
             "Multi-LoRA Serving: One Base, Many Adapters": "Multi-LoRA Serving：一基座，多 adapter"
             "Guided / Structured Decoding: Make Invalid Tokens Impossible": "Guided / Structured Decoding：让非法 token 不可能出现"
+            "Long-Context Inference: RoPE Scaling, Attention Sink & the KV Wall": "长上下文推理：RoPE 缩放、Attention Sink 与 KV 墙"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
             "Interview Bank": "面试题库"
@@ -213,6 +216,7 @@ plugins:
             "Tuning knobs: which one for which SLO": "调参旋钮：哪个对哪个 SLO"
             "Multi-LoRA serving: one base, many adapters": "Multi-LoRA serving：一基座，多 adapter"
             "Guided / structured decoding": "Guided / structured decoding：约束解码"
+            "Long-context inference: positions, sinks & the KV wall": "长上下文推理：位置、sink 与 KV 墙"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
