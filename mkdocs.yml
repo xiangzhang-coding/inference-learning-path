@@ -33,6 +33,8 @@ nav:
       - part2/index.md
       - "Operator Roofline: GEMM & Attention Intensity": part2/roofline-analysis.md
       - "KV Cache Memory Math": part2/kv-cache-math.md
+      - "FlashAttention (IO-aware)": part2/flash-attention.md
+      - "Kernel Fusion & CUDA Graphs": part2/kernel-fusion-cuda-graphs.md
   - "Part 3 · GPU Programming (Triton)": part3/index.md
   - "Part 4 · Quantization": part4/index.md
   - "Part 5 · Serving & Throughput (vLLM Core)": part5/index.md
@@ -49,6 +51,8 @@ nav:
       - "Number formats & precision": interview/number-formats.md
       - "Arithmetic intensity of GEMM & attention": interview/arithmetic-intensity.md
       - "VRAM budget & max concurrency": interview/vram-capacity-planning.md
+      - "FlashAttention & IO-aware attention": interview/flash-attention.md
+      - "CUDA graphs & kernel fusion": interview/cuda-graphs-fusion.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -118,6 +122,8 @@ plugins:
             "Part 2 · Single-GPU Inference Performance": "Part 2 · 单卡推理性能"
             "Operator Roofline: GEMM & Attention Intensity": "算子 Roofline：GEMM 与 Attention 强度"
             "KV Cache Memory Math": "KV 缓存显存数学"
+            "FlashAttention (IO-aware)": "FlashAttention（IO-aware）"
+            "Kernel Fusion & CUDA Graphs": "Kernel Fusion 与 CUDA Graphs"
             "Part 3 · GPU Programming (Triton)": "Part 3 · GPU 编程（Triton）"
             "Part 4 · Quantization": "Part 4 · 量化"
             "Part 5 · Serving & Throughput (vLLM Core)": "Part 5 · 服务化与吞吐（vLLM 核心）"
@@ -133,6 +139,8 @@ plugins:
             "Number formats & precision": "数值格式与精度"
             "Arithmetic intensity of GEMM & attention": "GEMM 与 attention 的算术强度"
             "VRAM budget & max concurrency": "显存预算与最大并发"
+            "FlashAttention & IO-aware attention": "FlashAttention 与 IO-aware attention"
+            "CUDA graphs & kernel fusion": "CUDA graphs 与 kernel fusion"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"

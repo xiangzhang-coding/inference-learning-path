@@ -16,7 +16,9 @@
 - **Part 2 · 单卡推理性能**
     - [GEMM 与 attention 的算术强度](arithmetic-intensity.md) — 仅凭形状推导一个算子的强度、decode attention 为何与上下文无关、以及越过拐点的 batch。
     - [显存预算与最大并发](vram-capacity-planning.md) — 走一遍完整显存预算、估最大并发；达到并发目标的旋钮。
+    - [FlashAttention 与 IO-aware attention](flash-attention.md) — 同 FLOPs 为何更快、online softmax、以及它在哪帮得上/帮不上。
+    - [CUDA graphs 与 kernel fusion](cuda-graphs-fusion.md) — decode 启动开销、为何伤 decode 而非 prefill、`enforce_eager` 权衡什么。
 - **Part 1、3–8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）与 Part 2（票 #6）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）与 Part 2（票 #6、#7）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
