@@ -36,7 +36,10 @@
     - [Speculative decoding](speculative-decoding.md) — 猜测-校验、为何只因 decode memory-bound 才免费、什么设定加速、以及何时反噬。
     - [追踪一个请求穿过 vLLM 架构](vllm-architecture.md) — V1 组件（API server / engine core / worker）、端到端追踪、以及哪个优化住在哪个盒子。
     - [调参旋钮：哪个对哪个 SLO](tuning-knobs.md) — 哪个旋钮移动吞吐/延迟曲线的哪一端、它的权衡、以及要跑的 sweep。
-- **Part 1、6–8** — 各题随对应课程在后续票落地。
+- **Part 6 · 进阶推理专题**
+    - [Multi-LoRA serving：一基座，多 adapter](multi-lora-serving.md) — 为何 LoRA adapter 很小、vLLM 如何用 grouped GEMM batch 异构 adapter、以及决定同服多少个的旋钮（`max_lora_rank`、`max_loras`、动态加载）。
+    - [Guided / structured decoding](structured-decoding.md) — schema 如何变成每步 logit 掩码、为何保证是硬的而非统计的、它的代价、以及为何它修形状却从不修真值。
+- **Part 1、7–8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）与 Part 5（票 #12、#13、#14）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）、Part 5（票 #12、#13、#14）与 Part 6 首批专题（票 #15）题目已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。

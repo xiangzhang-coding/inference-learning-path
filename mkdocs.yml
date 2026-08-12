@@ -56,7 +56,10 @@ nav:
       - "Speculative Decoding: Guess Many, Verify Once": part5/speculative-decoding.md
       - "The vLLM Architecture Map": part5/vllm-architecture-map.md
       - "Tuning Knobs: Sweeping the Throughput/Latency Curve": part5/tuning-knobs-sweep.md
-  - "Part 6 · Advanced Inference Topics": part6/index.md
+  - "Part 6 · Advanced Inference Topics":
+      - part6/index.md
+      - "Multi-LoRA Serving: One Base, Many Adapters": part6/multi-lora-serving.md
+      - "Guided / Structured Decoding: Make Invalid Tokens Impossible": part6/structured-decoding.md
   - "Part 7 · Multi-GPU & Distributed": part7/index.md
   - "Part 8 · Production & System Design": part8/index.md
   - "Interview Bank":
@@ -86,6 +89,8 @@ nav:
       - "Speculative decoding": interview/speculative-decoding.md
       - "Trace a request through vLLM's architecture": interview/vllm-architecture.md
       - "Tuning knobs: which one for which SLO": interview/tuning-knobs.md
+      - "Multi-LoRA serving: one base, many adapters": interview/multi-lora-serving.md
+      - "Guided / structured decoding": interview/structured-decoding.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -176,6 +181,8 @@ plugins:
             "The vLLM Architecture Map": "vLLM 架构地图"
             "Tuning Knobs: Sweeping the Throughput/Latency Curve": "调参旋钮：扫过吞吐/延迟曲线"
             "Part 6 · Advanced Inference Topics": "Part 6 · 进阶推理专题"
+            "Multi-LoRA Serving: One Base, Many Adapters": "Multi-LoRA Serving：一基座，多 adapter"
+            "Guided / Structured Decoding: Make Invalid Tokens Impossible": "Guided / Structured Decoding：让非法 token 不可能出现"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
             "Interview Bank": "面试题库"
@@ -204,6 +211,8 @@ plugins:
             "Speculative decoding": "Speculative decoding"
             "Trace a request through vLLM's architecture": "追踪一个请求穿过 vLLM 架构"
             "Tuning knobs: which one for which SLO": "调参旋钮：哪个对哪个 SLO"
+            "Multi-LoRA serving: one base, many adapters": "Multi-LoRA serving：一基座，多 adapter"
+            "Guided / structured decoding": "Guided / structured decoding：约束解码"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"

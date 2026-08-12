@@ -36,7 +36,10 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
     - [Speculative decoding](speculative-decoding.md) — guess-and-verify, why it's free only because decode is memory-bound, what sets the speedup, and when it backfires.
     - [Trace a request through vLLM's architecture](vllm-architecture.md) — the V1 components (API server / engine core / worker), an end-to-end trace, and which optimization lives in which box.
     - [Tuning knobs: which one for which SLO](tuning-knobs.md) — which knob moves which end of the throughput/latency curve, its trade, and the sweep to run.
-- **Parts 1, 6–8** — questions land alongside their lessons in later tickets.
+- **Part 6 · Advanced Inference Topics**
+    - [Multi-LoRA serving: one base, many adapters](multi-lora-serving.md) — why a LoRA adapter is tiny, how vLLM batches heterogeneous adapters via grouped GEMM, and the knobs (`max_lora_rank`, `max_loras`, dynamic loading) that cap how many you can co-serve.
+    - [Guided / structured decoding](structured-decoding.md) — how a schema becomes a per-step logit mask, why the guarantee is hard rather than statistical, its cost, and why it fixes shape but never truth.
+- **Parts 1, 7–8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), and Part 5 (tickets #12, #13, #14) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), and the first Part 6 topics (ticket #15) questions are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
