@@ -50,7 +50,8 @@
     - [可观测性与 profiling：指标、trace 与 kernel 时间线](observability-profiling.md) — 三个缩放层级（指标 → trace → profile）、你对哪些 vLLM 指标告警、prefill/decode 分叉、以及怎么捕获 torch/Nsight profile 而不淹死在数据里。
     - [SLO 驱动调优：goodput、绑定约束与闭环](slo-driven-tuning.md) — 为何对着 SLO 优化 goodput、怎么从指标读绑定约束（队列/prefill/decode/KV）、哪个旋钮缓解哪个、以及一次一个旋钮的闭环。
     - [服务生态：选 vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy](framework-comparison.md) — 共享基线 vs 分歧轴、一个可辩护的默认与例外、以及靠在你自己 workload 上、SLO 下 OpenAI 兼容地压测来决定。
+    - [系统设计：给推理服务定容与设计](system-design.md) — **长题**演练：框架（厘清 → 草稿纸算术 → 架构 → 瓶颈 → 取舍）与多道完整带解设计（为 X QPS、Y 延迟的 chat API、多租户 LoRA 平台、长上下文 RAG）。
 - **Part 1** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）、Part 5（票 #12、#13、#14）、Part 6（票 #15、#16）、Part 7（票 #17、#18）与 Part 8 首六题（票 #19、#20）已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）、Part 5（票 #12、#13、#14）、Part 6（票 #15、#16）、Part 7（票 #17、#18）与 Part 8 全部七题（票 #19、#20、#21——最后一张是一组系统设计长题）已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。

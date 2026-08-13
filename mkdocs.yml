@@ -73,6 +73,7 @@ nav:
       - "Observability & Profiling: Metrics, Traces, Kernel Timeline": part8/observability-profiling.md
       - "SLO-Driven Tuning: From Metrics to a Tuning Loop": part8/slo-driven-tuning.md
       - "The Serving Ecosystem: vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy": part8/framework-comparison.md
+      - "Capacity Planning: From One GPU's Throughput to a Fleet": part8/capacity-planning.md
   - "Interview Bank":
       - interview/index.md
       - "Prefill vs decode": interview/prefill-vs-decode.md
@@ -111,6 +112,7 @@ nav:
       - "Observability & profiling": interview/observability-profiling.md
       - "SLO-driven tuning": interview/slo-driven-tuning.md
       - "Serving ecosystem: vLLM vs TensorRT-LLM/TGI/SGLang/LMDeploy": interview/framework-comparison.md
+      - "System design: sizing & designing an inference service": interview/system-design.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -214,6 +216,7 @@ plugins:
             "Observability & Profiling: Metrics, Traces, Kernel Timeline": "可观测性与 profiling：指标、trace、kernel 时间线"
             "SLO-Driven Tuning: From Metrics to a Tuning Loop": "SLO 驱动调优：从指标到调优闭环"
             "The Serving Ecosystem: vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy": "服务生态：vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy"
+            "Capacity Planning: From One GPU's Throughput to a Fleet": "容量规划：从一张卡的吞吐到一个集群"
             "Interview Bank": "面试题库"
             "Prefill vs decode": "Prefill vs Decode"
             "Attention variants: MHA/MQA/GQA": "注意力变体：MHA/MQA/GQA"
@@ -251,6 +254,7 @@ plugins:
             "Observability & profiling": "可观测性与 profiling"
             "SLO-driven tuning": "SLO 驱动调优"
             "Serving ecosystem: vLLM vs TensorRT-LLM/TGI/SGLang/LMDeploy": "服务生态：vLLM vs TensorRT-LLM/TGI/SGLang/LMDeploy"
+            "System design: sizing & designing an inference service": "系统设计：给推理服务定容与设计"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
