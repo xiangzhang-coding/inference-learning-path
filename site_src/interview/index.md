@@ -43,7 +43,11 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
 - **Part 7 · Multi-GPU & Distributed**
     - [Parallelism: TP/PP/DP/EP & when to use each](parallelism-strategies.md) — the two reasons to parallelize, what each of TP/PP/DP/EP splits and costs to communicate, why TP stays within a node while PP crosses them, and how to pick a strategy from model size and topology.
     - [NCCL collectives & launching TP/PP](nccl-collective-communication.md) — what all-reduce / all-gather / reduce-scatter each move, why ring all-reduce is ~2× the message independent of GPU count, which collective TP uses and how often, and how vLLM launches TP/PP single- vs multi-node (mp vs ray) — including debugging an init hang.
-- **Parts 1, 8** — questions land alongside their lessons in later tickets.
+- **Part 8 · Production & System Design**
+    - [Serving over HTTP: the OpenAI-compatible server & its endpoints](openai-server-deployment.md) — what `vllm serve` exposes, `/v1/chat/completions` vs `/v1/completions`, what `/health` does and doesn't promise, how auth works, and interface vs capacity flags.
+    - [Load-testing & the concurrency knee (Little's Law)](load-testing-knee.md) — what the knee is and why the curve bends there, open- vs closed-loop load, how Little's Law explains the runaway past it, and why you report goodput (not raw throughput).
+    - [Routing, autoscaling & KV-aware routing](routing-autoscaling.md) — why prefix-aware routing beats round-robin (per-instance caches), why you autoscale on `num_requests_waiting` rather than GPU utilization, and how cold-start and drain shape a safe policy.
+- **Part 1** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), Part 6 (tickets #15, #16), and the first two Part 7 questions (tickets #17, #18) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), Part 6 (tickets #15, #16), Part 7 (tickets #17, #18), and the first three Part 8 questions (ticket #19) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.

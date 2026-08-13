@@ -65,7 +65,11 @@ nav:
       - part7/index.md
       - "Why Parallelize, and How: TP / PP / DP / EP": part7/parallelism-strategies.md
       - "NCCL & Launching TP/PP (Multi-GPU)": part7/nccl-and-launching-tp-pp.md
-  - "Part 8 · Production & System Design": part8/index.md
+  - "Part 8 · Production & System Design":
+      - part8/index.md
+      - "Serving over HTTP: the OpenAI-Compatible Server": part8/openai-server.md
+      - "Load-Testing to Find the Concurrency Knee": part8/load-testing-knee.md
+      - "Routing, Autoscaling & KV-Aware Routing": part8/routing-autoscaling.md
   - "Interview Bank":
       - interview/index.md
       - "Prefill vs decode": interview/prefill-vs-decode.md
@@ -98,6 +102,9 @@ nav:
       - "Long-context inference: positions, sinks & the KV wall": interview/long-context-inference.md
       - "Parallelism: TP/PP/DP/EP & when to use each": interview/parallelism-strategies.md
       - "NCCL collectives & launching TP/PP": interview/nccl-collective-communication.md
+      - "Serving over HTTP: the OpenAI-compatible server": interview/openai-server-deployment.md
+      - "Load-testing & the concurrency knee": interview/load-testing-knee.md
+      - "Routing, autoscaling & KV-aware routing": interview/routing-autoscaling.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -195,6 +202,9 @@ plugins:
             "Why Parallelize, and How: TP / PP / DP / EP": "为什么要并行，以及怎么并行：TP / PP / DP / EP"
             "NCCL & Launching TP/PP (Multi-GPU)": "NCCL 与启动 TP/PP（多卡）"
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
+            "Serving over HTTP: the OpenAI-Compatible Server": "HTTP 服务化：OpenAI 兼容 server"
+            "Load-Testing to Find the Concurrency Knee": "压测找并发拐点（knee）"
+            "Routing, Autoscaling & KV-Aware Routing": "路由、自动扩缩与 KV 感知路由"
             "Interview Bank": "面试题库"
             "Prefill vs decode": "Prefill vs Decode"
             "Attention variants: MHA/MQA/GQA": "注意力变体：MHA/MQA/GQA"
@@ -226,6 +236,9 @@ plugins:
             "Long-context inference: positions, sinks & the KV wall": "长上下文推理：位置、sink 与 KV 墙"
             "Parallelism: TP/PP/DP/EP & when to use each": "并行策略：TP/PP/DP/EP 及各自适用场景"
             "NCCL collectives & launching TP/PP": "NCCL 集合通信与启动 TP/PP"
+            "Serving over HTTP: the OpenAI-compatible server": "HTTP 服务化：OpenAI 兼容 server"
+            "Load-testing & the concurrency knee": "压测与并发拐点"
+            "Routing, autoscaling & KV-aware routing": "路由、自动扩缩与 KV 感知路由"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
