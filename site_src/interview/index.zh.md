@@ -47,7 +47,10 @@
     - [HTTP 服务化：OpenAI 兼容 server 及其 endpoints](openai-server-deployment.md) — `vllm serve` 暴露什么、`/v1/chat/completions` vs `/v1/completions`、`/health` 保证与不保证什么、鉴权怎么工作、以及接口 vs 容量 flag。
     - [压测与并发拐点（Little 定律）](load-testing-knee.md) — knee 是什么、曲线为何折弯、开环 vs 闭环负载、Little 定律怎么解释过 knee 后的失控、以及为何报 goodput（不是裸吞吐）。
     - [路由、自动扩缩与 KV 感知路由](routing-autoscaling.md) — 前缀感知路由为何胜过 round-robin（每实例缓存）、为何按 `num_requests_waiting` 而非 GPU 利用率扩缩、以及冷启动与排空怎么塑造安全策略。
+    - [可观测性与 profiling：指标、trace 与 kernel 时间线](observability-profiling.md) — 三个缩放层级（指标 → trace → profile）、你对哪些 vLLM 指标告警、prefill/decode 分叉、以及怎么捕获 torch/Nsight profile 而不淹死在数据里。
+    - [SLO 驱动调优：goodput、绑定约束与闭环](slo-driven-tuning.md) — 为何对着 SLO 优化 goodput、怎么从指标读绑定约束（队列/prefill/decode/KV）、哪个旋钮缓解哪个、以及一次一个旋钮的闭环。
+    - [服务生态：选 vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy](framework-comparison.md) — 共享基线 vs 分歧轴、一个可辩护的默认与例外、以及靠在你自己 workload 上、SLO 下 OpenAI 兼容地压测来决定。
 - **Part 1** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）、Part 5（票 #12、#13、#14）、Part 6（票 #15、#16）、Part 7（票 #17、#18）与 Part 8 首三题（票 #19）已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）、Part 5（票 #12、#13、#14）、Part 6（票 #15、#16）、Part 7（票 #17、#18）与 Part 8 首六题（票 #19、#20）已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。

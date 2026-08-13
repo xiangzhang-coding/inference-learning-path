@@ -70,6 +70,9 @@ nav:
       - "Serving over HTTP: the OpenAI-Compatible Server": part8/openai-server.md
       - "Load-Testing to Find the Concurrency Knee": part8/load-testing-knee.md
       - "Routing, Autoscaling & KV-Aware Routing": part8/routing-autoscaling.md
+      - "Observability & Profiling: Metrics, Traces, Kernel Timeline": part8/observability-profiling.md
+      - "SLO-Driven Tuning: From Metrics to a Tuning Loop": part8/slo-driven-tuning.md
+      - "The Serving Ecosystem: vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy": part8/framework-comparison.md
   - "Interview Bank":
       - interview/index.md
       - "Prefill vs decode": interview/prefill-vs-decode.md
@@ -105,6 +108,9 @@ nav:
       - "Serving over HTTP: the OpenAI-compatible server": interview/openai-server-deployment.md
       - "Load-testing & the concurrency knee": interview/load-testing-knee.md
       - "Routing, autoscaling & KV-aware routing": interview/routing-autoscaling.md
+      - "Observability & profiling": interview/observability-profiling.md
+      - "SLO-driven tuning": interview/slo-driven-tuning.md
+      - "Serving ecosystem: vLLM vs TensorRT-LLM/TGI/SGLang/LMDeploy": interview/framework-comparison.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -205,6 +211,9 @@ plugins:
             "Serving over HTTP: the OpenAI-Compatible Server": "HTTP 服务化：OpenAI 兼容 server"
             "Load-Testing to Find the Concurrency Knee": "压测找并发拐点（knee）"
             "Routing, Autoscaling & KV-Aware Routing": "路由、自动扩缩与 KV 感知路由"
+            "Observability & Profiling: Metrics, Traces, Kernel Timeline": "可观测性与 profiling：指标、trace、kernel 时间线"
+            "SLO-Driven Tuning: From Metrics to a Tuning Loop": "SLO 驱动调优：从指标到调优闭环"
+            "The Serving Ecosystem: vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy": "服务生态：vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy"
             "Interview Bank": "面试题库"
             "Prefill vs decode": "Prefill vs Decode"
             "Attention variants: MHA/MQA/GQA": "注意力变体：MHA/MQA/GQA"
@@ -239,6 +248,9 @@ plugins:
             "Serving over HTTP: the OpenAI-compatible server": "HTTP 服务化：OpenAI 兼容 server"
             "Load-testing & the concurrency knee": "压测与并发拐点"
             "Routing, autoscaling & KV-aware routing": "路由、自动扩缩与 KV 感知路由"
+            "Observability & profiling": "可观测性与 profiling"
+            "SLO-driven tuning": "SLO 驱动调优"
+            "Serving ecosystem: vLLM vs TensorRT-LLM/TGI/SGLang/LMDeploy": "服务生态：vLLM vs TensorRT-LLM/TGI/SGLang/LMDeploy"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
