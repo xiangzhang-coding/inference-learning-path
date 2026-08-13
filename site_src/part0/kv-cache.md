@@ -184,6 +184,8 @@ Further reading:
 - vLLM docs — [Automatic Prefix Caching](https://docs.vllm.ai/en/stable/) and engine arguments (baseline v0.26.0).
 - *Efficient Memory Management for Large Language Model Serving with PagedAttention* (the vLLM paper).
 - *GQA: Training Generalized Multi-Query Transformer Models* — why fewer KV heads.
+- The [KV-cache math](../part2/kv-cache-math.md) lesson (Part 2) — the full sizing arithmetic (bytes/token → how many sequences fit).
+- The [PagedAttention](../part5/paged-attention.md) lesson (Part 5) — how vLLM actually stores and manages this cache in fixed-size blocks.
 
 ## 9 · Self-check
 

@@ -201,6 +201,8 @@ print(llm.generate(["Name the parts of a car engine in one line."])[0].outputs[0
 - [continuous-batching](continuous-batching.md) 与 [PagedAttention](paged-attention.md) 课——engine core 里那两个盒子的深入。
 - [tuning-knobs 课](tuning-knobs-sweep.md)——每个盒子上的旋钮如何移动吞吐/延迟曲线（自然的下一步）。
 - vLLM `docs/usage/v1_guide.md`——V1 相对 V0 重构了什么、保留了什么，好让你读对代码。
+- [PagedAttention kernel](../part3/paged-attention-kernel.md) 课（Part 3）—— KV-cache 管理器那个盒子里的代码。
+- [OpenAI server](../part8/openai-server.md) 课（Part 8）—— API-server 那个盒子作为生产端点暴露出来。
 
 ## 9 · 自测小问
 

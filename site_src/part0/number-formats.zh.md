@@ -189,6 +189,7 @@ vllm serve Qwen/Qwen2.5-7B-Instruct --kv-cache-dtype fp8_e4m3 --max-model-len 81
 - OCP / NVIDIA-Arm-Intel —— *FP8 Formats for Deep Learning* —— E4M3 / E5M2 规格及其最大值。
 - vLLM 文档 —— *Engine arguments*（`--dtype`）与 KV 缓存 dtype 配置，基线 v0.26.0。
 - [GPU 硬件](gpu-hardware.md) 那节课 —— 为什么更少的字节/数几乎直接映射到 decode 吞吐。
+- [量化原理](../part4/quantization-basics.md) 课（Part 4）—— 这些格式在这里变成真正的量化方案（scale、zero-point、粒度）。
 
 ## 9 · 自测小问
 

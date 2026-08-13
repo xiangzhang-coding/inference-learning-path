@@ -213,6 +213,8 @@ print("head_dim    :", cfg.hidden_size // cfg.num_attention_heads)   # 128
 - *GQA: Training Generalized Multi-Query Transformer Models* —— 为什么更少 KV 头几乎不伤质量。
 - *RoFormer*（RoPE）—— 旋转位置编码及其外推。
 - [KV 缓存](kv-cache.md) 课 —— 深入那一列的每 token 成本。
+- [FlashAttention](../part2/flash-attention.md) 课（Part 2）—— attention 那一列实际如何被 IO 高效地算出来。
+- [长上下文推理](../part6/long-context-inference.md) 课（Part 6）—— RoPE 的外推与 KV 列在规模上如何相遇。
 
 ## 9 · 自测小问
 

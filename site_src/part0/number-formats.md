@@ -189,6 +189,7 @@ Further reading:
 - OCP / NVIDIA-Arm-Intel — *FP8 Formats for Deep Learning* — the E4M3 / E5M2 spec and their maxima.
 - vLLM docs — *Engine arguments* (`--dtype`) and the KV-cache dtype config, baseline v0.26.0.
 - The [GPU Hardware](gpu-hardware.md) lesson — why fewer bytes/number maps almost directly to decode throughput.
+- The [quantization basics](../part4/quantization-basics.md) lesson (Part 4) — where these formats become an actual quantization scheme (scales, zero-points, granularity).
 
 ## 9 · Self-check
 

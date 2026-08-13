@@ -208,6 +208,7 @@ Further reading:
 - vLLM docs — *CUDA graphs* design doc and `compilation_config` / `cudagraph_mode` (baseline v0.26.0); `enforce_eager` in *Conserving Memory*.
 - The [Operator Roofline](roofline-analysis.md) lesson — why decode's per-kernel GPU work is tiny (and thus launch-bound) in the first place.
 - The [FlashAttention](flash-attention.md) lesson — the other Part 2 kernel-level win, fusing the attention op itself.
+- The [CUDA execution model](../part3/cuda-execution-model.md) lesson (Part 3) — why each kernel launch costs what it does, the mechanism CUDA graphs amortize.
 
 ## 9 · Self-check
 

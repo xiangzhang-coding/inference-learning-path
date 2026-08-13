@@ -201,6 +201,8 @@ Further reading:
 - The [continuous-batching](continuous-batching.md) and [PagedAttention](paged-attention.md) lessons — the two boxes inside the engine core, in depth.
 - The [tuning-knobs lesson](tuning-knobs-sweep.md) — how a knob on each box moves the throughput/latency curve (the natural next step).
 - vLLM `docs/usage/v1_guide.md` — what V1 redesigned vs. kept from V0, so you read the right code.
+- The [PagedAttention kernel](../part3/paged-attention-kernel.md) lesson (Part 3) — the code inside the KV-cache-manager box.
+- The [OpenAI server](../part8/openai-server.md) lesson (Part 8) — the API-server box exposed as a production endpoint.
 
 ## 9 · Self-check
 

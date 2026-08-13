@@ -171,6 +171,7 @@ print("显存总量 (GB):   ", round(props.total_memory / 1024**3, 1))
 - Dao 等 —— *FlashAttention* —— 经典的「留在 SRAM」IO-aware kernel。
 - 你卡的厂商白皮书 —— 取*稠密*峰值 FLOP/s 与 HBM 带宽喂给 roofline。
 - [推理流程](inference-flow.md) 那节课 —— decode 的 $I\approx1$ 强度从哪来。
+- [CUDA 执行模型](../part3/cuda-execution-model.md) 课（Part 3）—— 这里的 SM / warp / occupancy 模型化为你亲手启动、推理的代码。
 
 ## 9 · 自测小问
 

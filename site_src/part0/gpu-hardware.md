@@ -171,6 +171,7 @@ Further reading:
 - Dao et al. — *FlashAttention* — the canonical "keep it in SRAM" IO-aware kernel.
 - Your GPU's vendor whitepaper — for the *dense* peak FLOP/s and HBM bandwidth to feed the roofline.
 - The [Inference Flow](inference-flow.md) lesson — where decode's $I\approx1$ intensity came from.
+- The [CUDA execution model](../part3/cuda-execution-model.md) lesson (Part 3) — the SM / warp / occupancy model here turned into code you launch and reason about.
 
 ## 9 · Self-check
 

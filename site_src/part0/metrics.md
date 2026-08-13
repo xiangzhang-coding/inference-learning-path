@@ -219,6 +219,8 @@ Further reading:
 - vLLM docs — *Benchmarking* (`vllm bench serve` / `sweep`) and *v1 Metrics* (the `vllm:` Prometheus surface), baseline v0.26.0.
 - Zhong et al. — *DistServe* — where "goodput under SLO" is made the primary objective and prefill/decode are disaggregated to hit it.
 - The [Inference Flow](inference-flow.md) lesson — why TTFT is a prefill metric and TPOT a decode metric.
+- The [load-testing](../part8/load-testing-knee.md) lesson (Part 8) — measuring these metrics under real load and finding the concurrency knee.
+- The [SLO-driven tuning](../part8/slo-driven-tuning.md) lesson (Part 8) — turning goodput and percentile SLOs into concrete engine settings.
 
 ## 9 · Self-check
 

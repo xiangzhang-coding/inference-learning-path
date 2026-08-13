@@ -214,6 +214,8 @@ Further reading:
 - *GQA: Training Generalized Multi-Query Transformer Models* — why fewer KV heads barely hurt quality.
 - *RoFormer* (RoPE) — rotary position embedding and its extrapolation.
 - The [KV Cache](kv-cache.md) lesson — the per-token column in depth.
+- The [FlashAttention](../part2/flash-attention.md) lesson (Part 2) — how the attention column is actually computed IO-efficiently.
+- The [long-context inference](../part6/long-context-inference.md) lesson (Part 6) — where RoPE's extrapolation and the KV column meet at scale.
 
 ## 9 · Self-check
 

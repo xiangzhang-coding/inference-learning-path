@@ -184,6 +184,8 @@ vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ \
 - vLLM 文档 —— [Automatic Prefix Caching](https://docs.vllm.ai/en/stable/) 与 engine 参数（基线 v0.26.0）。
 - *Efficient Memory Management for Large Language Model Serving with PagedAttention*（vLLM 论文）。
 - *GQA: Training Generalized Multi-Query Transformer Models* —— 为什么更少的 KV 头。
+- [KV 缓存数学](../part2/kv-cache-math.md) 课（Part 2）—— 完整的显存估算（字节/token → 能塞多少条序列）。
+- [PagedAttention](../part5/paged-attention.md) 课（Part 5）—— vLLM 实际如何以定长 block 存储与管理这块缓存。
 
 ## 9 · 自测小问
 

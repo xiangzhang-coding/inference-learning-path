@@ -178,6 +178,8 @@ one("Summarize in one word: hello.", max_tokens=256)        # 小 prefill，多 
 - vLLM 文档 —— engine 架构与调度（基线 v0.26.0）。
 - *Orca: A Distributed Serving System for Transformer-Based Generative Models* —— continuous batching 的源头，它整个活在 decode 阶段。
 - [KV 缓存](kv-cache.md) 课 —— decode 每步重读的那块显存。
+- [算子 Roofline](../part2/roofline-analysis.md) 课（Part 2）—— 「decode 是 memory-bound」在这里被算术强度与 ridge point 量化。
+- [调度器](../part5/scheduler-chunked-prefill-pd.md) 课（Part 5）—— engine 如何交错这两个阶段（chunked prefill、PD 分离）以在 TTFT 与吞吐间权衡。
 
 ## 9 · 自测小问
 

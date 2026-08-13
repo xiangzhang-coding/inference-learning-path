@@ -178,6 +178,8 @@ Further reading:
 - vLLM docs — engine architecture and scheduling (baseline v0.26.0).
 - *Orca: A Distributed Serving System for Transformer-Based Generative Models* — the origin of continuous batching, which lives entirely in the decode phase.
 - The [KV Cache](kv-cache.md) lesson — the memory that decode re-reads every step.
+- The [Operator Roofline](../part2/roofline-analysis.md) lesson (Part 2) — where "decode is memory-bound" becomes quantitative, via arithmetic intensity and the ridge point.
+- The [scheduler](../part5/scheduler-chunked-prefill-pd.md) lesson (Part 5) — how the engine interleaves the two phases (chunked prefill, PD disaggregation) to balance TTFT against throughput.
 
 ## 9 · Self-check
 

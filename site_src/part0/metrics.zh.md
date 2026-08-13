@@ -219,6 +219,8 @@ curl http://localhost:8000/metrics | grep -E \
 - vLLM 文档 —— *Benchmarking*（`vllm bench serve` / `sweep`）与 *v1 Metrics*（`vllm:` Prometheus 面），基线 v0.26.0。
 - Zhong 等 —— *DistServe* —— 把「SLO 下的 goodput」作为首要目标、并为此做 prefill/decode 分离。
 - [推理流程](inference-flow.md) 那节课 —— 为什么 TTFT 是 prefill 度量、TPOT 是 decode 度量。
+- [压测找拐点](../part8/load-testing-knee.md) 课（Part 8）—— 在真实负载下测量这些度量并找到并发拐点。
+- [SLO 驱动调优](../part8/slo-driven-tuning.md) 课（Part 8）—— 把 goodput 与百分位 SLO 落成具体的 engine 配置。
 
 ## 9 · 自测小问
 

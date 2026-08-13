@@ -208,6 +208,7 @@ Further reading:
 - vLLM `docs/usage/troubleshooting.md` — the exact GPU/CPU communication sanity script (§4) and the debugging env vars.
 - vLLM `docs/serving/parallelism_scaling.md` and `docs/serving/expert_parallel_deployment.md` — the `mp`/`ray` backends, multi-node flags, and `GLOO_SOCKET_IFNAME` network setup quoted here.
 - The [previous lesson](parallelism-strategies.md) — why you parallelize (the collectives here are *how* TP/PP pay for it).
+- The [capacity-planning](../part8/capacity-planning.md) lesson (Part 8) — how TP/PP choices feed the VRAM and fleet-sizing math.
 
 ## 9 · Self-check
 

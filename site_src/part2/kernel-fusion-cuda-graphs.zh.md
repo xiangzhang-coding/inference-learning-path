@@ -208,6 +208,7 @@ vllm serve Qwen/Qwen2.5-7B-Instruct-AWQ --max-model-len 8192 --enforce-eager
 - vLLM 文档 —— *CUDA graphs* 设计文档与 `compilation_config` / `cudagraph_mode`（基线 v0.26.0）；`enforce_eager` 见 *Conserving Memory*。
 - [算子 Roofline](roofline-analysis.md) 那节课 —— 为什么 decode 每 kernel 的 GPU 工作一开始就那么小（因而 launch-bound）。
 - [FlashAttention](flash-attention.md) 那节课 —— Part 2 另一个 kernel 级收益，融合 attention 算子本身。
+- [CUDA 执行模型](../part3/cuda-execution-model.md) 课（Part 3）—— 每次 kernel 启动为何是那个代价，也就是 CUDA graphs 所摊薄的机制。
 
 ## 9 · 自测小问
 

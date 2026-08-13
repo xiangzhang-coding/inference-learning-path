@@ -208,6 +208,7 @@ dist.destroy_process_group()
 - vLLM `docs/usage/troubleshooting.md` —— §4 那段精确的 GPU/CPU 通信自检脚本与调试环境变量。
 - vLLM `docs/serving/parallelism_scaling.md` 与 `docs/serving/expert_parallel_deployment.md` —— `mp`/`ray` 后端、多机 flag，以及此处引用的 `GLOO_SOCKET_IFNAME` 网络配置。
 - [上一节](parallelism-strategies.md) —— 为什么并行（这里的集合通信是 TP/PP *怎么*为它付账）。
+- [容量规划](../part8/capacity-planning.md) 课（Part 8）—— TP/PP 的选择如何喂给 VRAM 与集群规模估算。
 
 ## 9 · 自测小问
 
