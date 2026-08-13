@@ -1,7 +1,7 @@
 # 为什么要并行，以及怎么并行：张量 / 流水线 / 数据 / 专家并行
 
 !!! info "基线：**vLLM 0.26.0** · 模型 `Qwen2.5-7B-Instruct` · 单张 RTX 4090 (24 GB)"
-    已按 ADR-0004 用 Context7 对照 vLLM 0.26.0 核实：张量并行用 **`tensor_parallel_size`** / **`--tensor-parallel-size`**（把一个模型切在*同一节点内*），流水线并行用 **`pipeline_parallel_size`** / **`--pipeline-parallel-size`**（切*层*，是*跨节点*的手段），数据并行用 **`--data-parallel-size`**（副本），MoE 的专家并行用 **`--enable-expert-parallel`**（实验特性；EP 度数自动算为 `tensor_parallel_size × data_parallel_size`）。本节课讲*为什么并行、选哪种*——真正上手多卡（NCCL + 在 A100 上跑起 TP/PP）放在本 Part 的下一张 ticket，见 [Part 7 总览](index.md)。它建立在 [GPU 硬件模型](../part0/gpu-hardware.md)、[KV 缓存](../part0/kv-cache.md) 与 [注意力变体](../interview/attention-variants.md) 之上。§4 的模型是**显存/通信模型，不是 benchmark**；所有数字均为**示例 / 量级参考**。
+    已按 ADR-0004 用 Context7 对照 vLLM 0.26.0 核实：张量并行用 **`tensor_parallel_size`** / **`--tensor-parallel-size`**（把一个模型切在*同一节点内*），流水线并行用 **`pipeline_parallel_size`** / **`--pipeline-parallel-size`**（切*层*，是*跨节点*的手段），数据并行用 **`--data-parallel-size`**（副本），MoE 的专家并行用 **`--enable-expert-parallel`**（实验特性；EP 度数自动算为 `tensor_parallel_size × data_parallel_size`）。本节课讲*为什么并行、选哪种*——真正上手多卡（NCCL + 在 A100 上跑起 TP/PP）见 [下一节课](nccl-and-launching-tp-pp.md)。它建立在 [GPU 硬件模型](../part0/gpu-hardware.md)、[KV 缓存](../part0/kv-cache.md) 与 [注意力变体](../interview/attention-variants.md) 之上。§4 的模型是**显存/通信模型，不是 benchmark**；所有数字均为**示例 / 量级参考**。
 
 ---
 
@@ -188,7 +188,7 @@ Llama-3.1-405B  FP16  754.4 GB -> needs TP>=64    TP all-reduce ~ 8064.0 KB/toke
 
 !!! gpu "GPU Lab（单卡上做推演；真正的 TP/PP 需要多卡）"
     - **最低显存：** §4 的算术不用显存（纯 Python）。以 `tensor_parallel_size=1` 跑 Qwen2.5-7B 在你的单张 4090 上约需 16 GB（INT4/AWQ）。
-    - **建议 AutoDL 卡型：** RTX 4090 (24 GB) 做单卡自检。**真正的多卡 TP/PP**（2×/4× A100）是下一节 Part 7 课的上手内容（NCCL + 启动 TP/PP），按 ADR-0001 用「开机即关」的 A100——别只为这一页去租多卡。见 [Part 7 总览](index.md)。
+    - **建议 AutoDL 卡型：** RTX 4090 (24 GB) 做单卡自检。**真正的多卡 TP/PP**（2×/4× A100）是 [下一节课：NCCL 与启动 TP/PP](nccl-and-launching-tp-pp.md)，按 ADR-0001 用「开机即关」的 A100——别只为这一页去租多卡。
     - **预估耗时 / 花费：** §4 + 推演约 20 分钟（免费、无卡模式）· 可选单卡跑约 10 分钟 · 约 ¥1–2（示例）
     - **平台：** NVIDIA CUDA（默认）。TP/PP 通信在 NVIDIA 上走 **NCCL**；**非 NVIDIA：** AMD ROCm 用 RCCL，而那些*概念*（all-reduce / 点对点 / all-to-all）与后端无关——集合通信的机制是下一节课。
 
@@ -197,7 +197,7 @@ Llama-3.1-405B  FP16  754.4 GB -> needs TP>=64    TP all-reduce ~ 8064.0 KB/toke
 1. **跑 §4 的模型。** 确认三条判定。把 `bytes_per_param` 改成 `0.5`（INT4），看 70B 的 `min_tp` 掉下来——量化能把「需要 TP≥8」变成「需要 TP≥2」，也就是一个节点而非两个。这是加卡之前的*第一个*杠杆。
 2. **在你的 4090 上做单卡自检。** `vllm serve Qwen/Qwen2.5-7B-Instruct`（默认 `tensor_parallel_size=1`）确认「fits on 1 GPU」判定——不用切；你会用 DP 副本来扩它。
 3. **预测失败。** 如果你在只有**一张** GPU 的机器上设 `--tensor-parallel-size 2`，vLLM 放不下 2 个切片 → 启动即报错。在跑*之前*就预测到；理解*为什么*（第二个切片没有第二块设备可放）才是重点。
-4. **画一个拓扑。** 对一个假想的 2 节点 × 4 卡集群服务 Llama-3.1-70B，写出 flag：`--tensor-parallel-size 4 --pipeline-parallel-size 2`（每个 4 卡节点内 TP，跨 2 节点 PP）——即 §3.5 决策树的落地。真正的启动放在下一节 Part 7 课（见 [Part 7 总览](index.md)）。
+4. **画一个拓扑。** 对一个假想的 2 节点 × 4 卡集群服务 Llama-3.1-70B，写出 flag：`--tensor-parallel-size 4 --pipeline-parallel-size 2`（每个 4 卡节点内 TP，跨 2 节点 PP）——即 §3.5 决策树的落地。真正的启动是 [下一节课：NCCL 与启动 TP/PP](nccl-and-launching-tp-pp.md)。
 
 ## 6 · 常见坑 / 反直觉点
 
@@ -223,7 +223,7 @@ Llama-3.1-405B  FP16  754.4 GB -> needs TP>=64    TP all-reduce ~ 8064.0 KB/toke
 - *GPipe*（Huang 等，2018）与 *PipeDream*（Narayanan 等，2019）—— 流水线并行与 microbatch/气泡权衡。
 - *Switch Transformer*（Fedus 等，2021）—— MoE 与专家路由，EP 存在的场景。
 - vLLM `docs/serving/parallelism_scaling.md`、`docs/configuration/optimization.md`、`docs/serving/data_parallel_deployment.md`、`docs/serving/expert_parallel_deployment.md` —— 此处引用的 `--tensor-parallel-size` / `--pipeline-parallel-size` / `--data-parallel-size` / `--enable-expert-parallel` 机制与决策树。
-- [Part 7 总览](index.md) —— 下一节课（NCCL 集合通信与真正在多卡上启动 TP/PP）接着在那里落地。
+- [下一节课 —— NCCL 集合通信与启动 TP/PP](nccl-and-launching-tp-pp.md) —— TP 每层 all-reduce 之下的集合通信原语，以及真正单机 vs 多机启动 TP/PP。
 
 ## 9 · 自测小问
 

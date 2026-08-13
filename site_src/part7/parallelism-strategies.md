@@ -1,7 +1,7 @@
 # Why Parallelize, and How: Tensor / Pipeline / Data / Expert Parallelism
 
 !!! info "Baseline: **vLLM 0.26.0** · model `Qwen2.5-7B-Instruct` · single RTX 4090 (24 GB)"
-    Verified against vLLM 0.26.0 via Context7 (ADR-0004): tensor parallelism uses **`tensor_parallel_size`** / **`--tensor-parallel-size`** (shard a model *within one node*), pipeline parallelism uses **`pipeline_parallel_size`** / **`--pipeline-parallel-size`** (split *layers*, the strategy for going *across nodes*), data parallelism uses **`--data-parallel-size`** (replicas), and expert parallelism for MoE uses **`--enable-expert-parallel`** (experimental; EP size is auto-computed as `tensor_parallel_size × data_parallel_size`). This lesson is the *why & which* — the hands-on multi-GPU run (NCCL + actually launching TP/PP on an A100) lands in the next Part 7 ticket; see the [Part 7 overview](index.md). It builds on the [GPU hardware model](../part0/gpu-hardware.md), [KV cache](../part0/kv-cache.md), and [attention variants](../interview/attention-variants.md). The §4 model is a **memory/communication model, not a benchmark**; all sizes are **illustrative / order-of-magnitude references**.
+    Verified against vLLM 0.26.0 via Context7 (ADR-0004): tensor parallelism uses **`tensor_parallel_size`** / **`--tensor-parallel-size`** (shard a model *within one node*), pipeline parallelism uses **`pipeline_parallel_size`** / **`--pipeline-parallel-size`** (split *layers*, the strategy for going *across nodes*), data parallelism uses **`--data-parallel-size`** (replicas), and expert parallelism for MoE uses **`--enable-expert-parallel`** (experimental; EP size is auto-computed as `tensor_parallel_size × data_parallel_size`). This lesson is the *why & which* — the hands-on multi-GPU run (NCCL + actually launching TP/PP on an A100) is the [next lesson](nccl-and-launching-tp-pp.md). It builds on the [GPU hardware model](../part0/gpu-hardware.md), [KV cache](../part0/kv-cache.md), and [attention variants](../interview/attention-variants.md). The §4 model is a **memory/communication model, not a benchmark**; all sizes are **illustrative / order-of-magnitude references**.
 
 ---
 
@@ -188,7 +188,7 @@ The story in three rows: **Qwen2.5-7B fits** (TP=1 — you'd only add DP replica
 
 !!! gpu "GPU Lab (conceptual on one card; real TP/PP needs multiple GPUs)"
     - **Min VRAM:** none for the §4 arithmetic (pure Python). Running Qwen2.5-7B at `tensor_parallel_size=1` needs ~16 GB (INT4/AWQ) on your single 4090.
-    - **Suggested AutoDL card:** RTX 4090 (24 GB) for the single-GPU sanity check. **Actual multi-GPU TP/PP** (2×/4× A100) is the next Part 7 lesson's hands-on (NCCL + launching TP/PP), on a "power-on-then-off" A100 per ADR-0001 — don't rent multi-GPU just for this page. See the [Part 7 overview](index.md).
+    - **Suggested AutoDL card:** RTX 4090 (24 GB) for the single-GPU sanity check. **Actual multi-GPU TP/PP** (2×/4× A100) is the [next lesson: NCCL & launching TP/PP](nccl-and-launching-tp-pp.md), on a "power-on-then-off" A100 per ADR-0001 — don't rent multi-GPU just for this page.
     - **Est. time / cost:** §4 + reasoning ~20 min (free, no-card mode) · optional single-GPU run ~10 min · ~¥1–2 (illustrative)
     - **Platform:** NVIDIA CUDA (default). TP/PP communication rides **NCCL** on NVIDIA; **non-NVIDIA:** AMD ROCm uses RCCL, and the *concepts* (all-reduce/point-to-point/all-to-all) are backend-agnostic — the collective-comms mechanics are the next lesson.
 
@@ -197,7 +197,7 @@ Reason your way through the split before you ever rent a second GPU:
 1. **Run the §4 model.** Confirm the three verdicts. Change `bytes_per_param` to `0.5` (INT4) and watch `min_tp` for 70B drop — quantization can turn "needs TP≥8" into "needs TP≥2", i.e. one node instead of two. This is the *first* lever before you add GPUs.
 2. **Sanity-check single-GPU on your 4090.** `vllm serve Qwen/Qwen2.5-7B-Instruct` (default `tensor_parallel_size=1`) confirms the "fits on 1 GPU" verdict — no split needed; you'd scale it with DP replicas.
 3. **Predict the failure.** If you set `--tensor-parallel-size 2` on a box with **one** GPU, vLLM can't place 2 shards → it errors at startup. Predict that *before* running it; understanding *why* (there's no second device for the second shard) is the point.
-4. **Map a topology.** For a hypothetical 2-node × 4-GPU cluster serving Llama-3.1-70B, write the flags: `--tensor-parallel-size 4 --pipeline-parallel-size 2` (TP within each 4-GPU node, PP across the 2 nodes) — the §3.5 tree applied. The real launch lands in the next Part 7 lesson (see the [Part 7 overview](index.md)).
+4. **Map a topology.** For a hypothetical 2-node × 4-GPU cluster serving Llama-3.1-70B, write the flags: `--tensor-parallel-size 4 --pipeline-parallel-size 2` (TP within each 4-GPU node, PP across the 2 nodes) — the §3.5 tree applied. The real launch is the [next lesson: NCCL & launching TP/PP](nccl-and-launching-tp-pp.md).
 
 ## 6 · Common pitfalls / counter-intuitive points
 
@@ -223,7 +223,7 @@ Further reading:
 - *GPipe* (Huang et al., 2018) and *PipeDream* (Narayanan et al., 2019) — pipeline parallelism and the microbatch/bubble trade-off.
 - *Switch Transformer* (Fedus et al., 2021) — MoE and expert routing, the setting EP exists for.
 - vLLM `docs/serving/parallelism_scaling.md`, `docs/configuration/optimization.md`, `docs/serving/data_parallel_deployment.md`, `docs/serving/expert_parallel_deployment.md` — the `--tensor-parallel-size` / `--pipeline-parallel-size` / `--data-parallel-size` / `--enable-expert-parallel` mechanics and the decision tree quoted here.
-- The [Part 7 overview](index.md) — the next lesson (NCCL collective communication and actually launching TP/PP on multiple GPUs) lands there next.
+- The [next lesson — NCCL Collective Communication & Launching TP/PP](nccl-and-launching-tp-pp.md) — the collective primitives under TP's per-layer all-reduce, and actually launching TP/PP single- vs multi-node.
 
 ## 9 · Self-check
 

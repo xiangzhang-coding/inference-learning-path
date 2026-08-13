@@ -42,7 +42,8 @@
     - [长上下文推理：位置、sink 与 KV 墙](long-context-inference.md) — 为何模型超出训练长度就崩、RoPE 缩放（PI/NTK/YaRN）如何修、attention sink 是什么、以及为何 KV 缓存——而非算力——是长上下文的上限。
 - **Part 7 · 多卡与分布式**
     - [并行策略：TP/PP/DP/EP 及各自适用场景](parallelism-strategies.md) — 并行的两个理由、TP/PP/DP/EP 各切什么与通信代价、为何 TP 待在节点内而 PP 跨节点、以及如何从模型大小和拓扑选出策略。
+    - [NCCL 集合通信与启动 TP/PP](nccl-collective-communication.md) — all-reduce / all-gather / reduce-scatter 各搬什么、为何 ring all-reduce 约为消息的 2 倍且与卡数无关、TP 用哪个集合通信及多频繁、以及 vLLM 单机 vs 多机（mp vs ray）如何启动 TP/PP——含调试 init 卡死。
 - **Part 1、8** — 各题随对应课程在后续票落地。
 
 !!! note "脚手架状态"
-    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）、Part 5（票 #12、#13、#14）、Part 6（票 #15、#16）与 Part 7 首题（票 #17）已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。
+    Part 0（票 #2、#4、#5）、Part 2（票 #6、#7）、Part 3（票 #8、#9）、Part 4（票 #10、#11）、Part 5（票 #12、#13、#14）、Part 6（票 #15、#16）与 Part 7 首两题（票 #17、#18）已入库，每题与它考察的课程双向链接。完整 ~100 道题库随各 Part 落地增长。难度档 / 频率标签 / 权重暂不在范围。

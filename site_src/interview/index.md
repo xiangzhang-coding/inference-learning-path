@@ -42,7 +42,8 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
     - [Long-context inference: positions, sinks & the KV wall](long-context-inference.md) — why models break past training length and how RoPE scaling (PI/NTK/YaRN) fixes it, what the attention sink is, and why the KV cache — not compute — is the long-context ceiling.
 - **Part 7 · Multi-GPU & Distributed**
     - [Parallelism: TP/PP/DP/EP & when to use each](parallelism-strategies.md) — the two reasons to parallelize, what each of TP/PP/DP/EP splits and costs to communicate, why TP stays within a node while PP crosses them, and how to pick a strategy from model size and topology.
+    - [NCCL collectives & launching TP/PP](nccl-collective-communication.md) — what all-reduce / all-gather / reduce-scatter each move, why ring all-reduce is ~2× the message independent of GPU count, which collective TP uses and how often, and how vLLM launches TP/PP single- vs multi-node (mp vs ray) — including debugging an init hang.
 - **Parts 1, 8** — questions land alongside their lessons in later tickets.
 
 !!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), Part 6 (tickets #15, #16), and the first Part 7 question (ticket #17) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), Part 6 (tickets #15, #16), and the first two Part 7 questions (tickets #17, #18) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.

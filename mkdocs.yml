@@ -64,6 +64,7 @@ nav:
   - "Part 7 · Multi-GPU & Distributed":
       - part7/index.md
       - "Why Parallelize, and How: TP / PP / DP / EP": part7/parallelism-strategies.md
+      - "NCCL & Launching TP/PP (Multi-GPU)": part7/nccl-and-launching-tp-pp.md
   - "Part 8 · Production & System Design": part8/index.md
   - "Interview Bank":
       - interview/index.md
@@ -96,6 +97,7 @@ nav:
       - "Guided / structured decoding": interview/structured-decoding.md
       - "Long-context inference: positions, sinks & the KV wall": interview/long-context-inference.md
       - "Parallelism: TP/PP/DP/EP & when to use each": interview/parallelism-strategies.md
+      - "NCCL collectives & launching TP/PP": interview/nccl-collective-communication.md
   - "Eval Sets":
       - eval/index.md
       - "Small set (~20)": eval/small.md
@@ -191,6 +193,7 @@ plugins:
             "Long-Context Inference: RoPE Scaling, Attention Sink & the KV Wall": "长上下文推理：RoPE 缩放、Attention Sink 与 KV 墙"
             "Part 7 · Multi-GPU & Distributed": "Part 7 · 多卡与分布式"
             "Why Parallelize, and How: TP / PP / DP / EP": "为什么要并行，以及怎么并行：TP / PP / DP / EP"
+            "NCCL & Launching TP/PP (Multi-GPU)": "NCCL 与启动 TP/PP（多卡）"
             "Part 8 · Production & System Design": "Part 8 · 生产部署与系统设计"
             "Interview Bank": "面试题库"
             "Prefill vs decode": "Prefill vs Decode"
@@ -222,6 +225,7 @@ plugins:
             "Guided / structured decoding": "Guided / structured decoding：约束解码"
             "Long-context inference: positions, sinks & the KV wall": "长上下文推理：位置、sink 与 KV 墙"
             "Parallelism: TP/PP/DP/EP & when to use each": "并行策略：TP/PP/DP/EP 及各自适用场景"
+            "NCCL collectives & launching TP/PP": "NCCL 集合通信与启动 TP/PP"
             "Eval Sets": "评测集"
             "Small set (~20)": "小评测集（~20）"
             "Large set": "大评测集"
