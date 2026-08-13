@@ -154,5 +154,6 @@ Assume: `Qwen2.5-7B` at **32k context**, RAG where many requests share a **large
 ## Linked concepts
 
 - Lesson: [Capacity Planning: From One GPU's Throughput to a Fleet](../part8/capacity-planning.md) — the napkin math (feasibility → per-instance → fleet) all three designs open with.
+- Capstone: [Max Out Qwen2.5-7B Throughput on One 4090](../capstone/index.md) — the hands-on other half of these designs: actually climb the optimization ladder and produce the before→after report you'd bring to this interview.
 - Related questions: [VRAM budget & max concurrency](vram-capacity-planning.md) (the memory gate), [Load-testing & the concurrency knee](load-testing-knee.md) ($r_{\text{inst}}$), [Routing, autoscaling & KV-aware routing](routing-autoscaling.md) (the fleet at runtime), [SLO-driven tuning](slo-driven-tuning.md) (tune vs scale), [Multi-LoRA serving](multi-lora-serving.md) (Q2), [Long-context inference](long-context-inference.md) (Q3), [Parallelism: TP/PP/DP/EP](parallelism-strategies.md) (TP degree).
 - Glossary: [SLO, Knee, Goodput, TP degree, KV-cache aware routing, Prefix caching](../glossary.md)

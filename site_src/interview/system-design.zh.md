@@ -154,5 +154,6 @@
 ## 关联概念
 
 - 课程：[容量规划：从一张卡的吞吐到一个集群](../part8/capacity-planning.md) —— 三道设计都以之开场的草稿纸算术（可行性 → 单实例 → 集群）。
+- Capstone：[在单张 4090 上把 Qwen2.5-7B 吞吐拉满](../capstone/index.md) —— 这些设计动手的另一半：真去爬优化阶梯、产出你会带进这场面试的优化前→后报告。
 - 相关题目：[显存预算与最大并发](vram-capacity-planning.md)（显存闸）、[压测与并发拐点](load-testing-knee.md)（$r_{\text{inst}}$）、[路由、自动扩缩与 KV 感知路由](routing-autoscaling.md)（运行时的集群）、[SLO 驱动调优](slo-driven-tuning.md)（调参 vs 扩容）、[Multi-LoRA serving](multi-lora-serving.md)（Q2）、[长上下文推理](long-context-inference.md)（Q3）、[并行策略：TP/PP/DP/EP](parallelism-strategies.md)（TP degree）。
 - 术语：[SLO、Knee、Goodput、TP degree、KV-cache aware routing、Prefix caching](../glossary.md)
