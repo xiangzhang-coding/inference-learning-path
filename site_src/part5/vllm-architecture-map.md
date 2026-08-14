@@ -13,35 +13,25 @@ The one thing to internalize: **vLLM V1 is a multi-process pipeline, and the con
 
 ## 2 · Mental model
 
-The V1 process pipeline, and where each Part 5 concept lives:
+The V1 process pipeline, and where each Part 5 concept lives (a process/component topology, so Mermaid, per ADR-0005):
 
-```text
-        HTTP request
-             │
-   ┌─────────▼──────────┐   process 1 (scales with data parallelism)
-   │    API SERVER      │   HTTP in/out, tokenize / detokenize, input processing
-   └─────────┬──────────┘
-             │  (IPC)
-   ┌─────────▼──────────────────────────────────────────┐   process(es): 1 per DP rank
-   │              ENGINE CORE  (busy loop)               │
-   │  ┌───────────────┐   ┌──────────────────────────┐   │
-   │  │  SCHEDULER    │   │  KV-CACHE MANAGER          │   │   ◄── continuous batching (scheduler)
-   │  │ admit/evict,  │   │  BlockPool: alloc/free,    │   │   ◄── PagedAttention (block manager)
-   │  │ chunked       │   │  prefix-cache hash map     │   │   ◄── prefix caching (hash map)
-   │  │ prefill,      │   │                            │   │
-   │  │ token budget  │   │                            │   │
-   │  └───────────────┘   └──────────────────────────┘   │
-   └─────────┬───────────────────────────────────────────┘
-             │  dispatch scheduler_output
-   ┌─────────▼──────────────────────────────────────────┐   process(es): TP × PP per engine core
-   │              GPU WORKER  (one per GPU)              │   weights, forward pass, GPU memory
-   │  ┌────────────────────────────────────────────┐    │
-   │  │  MODEL RUNNER (GPUModelRunner.execute_model) │    │   ◄── CUDA graphs / enforce_eager
-   │  │  input tensors → nn.Module fwd → logits      │    │   ◄── speculative decoding (verify)
-   │  │            → SAMPLER → token                 │    │
-   │  └────────────────────────────────────────────┘    │
-   └─────────────────────────────────────────────────────┘
-   (+ DP COORDINATOR process for load balancing when data-parallel)
+```mermaid
+flowchart TB
+    H["HTTP request"] --> API["API SERVER<br/>HTTP I/O, tokenize / detokenize<br/>(scales with data parallelism)"]
+    API -->|"IPC"| SCH
+    subgraph EC["ENGINE CORE — busy loop (1 per DP rank)"]
+        SCH["SCHEDULER<br/>admit / evict, chunked prefill, token budget<br/>◄ continuous batching, scheduler"]
+        KV["KV-CACHE MANAGER<br/>BlockPool alloc / free + prefix-cache hash map<br/>◄ PagedAttention, prefix caching"]
+        SCH --- KV
+    end
+    EC -->|"dispatch scheduler_output"| MR
+    subgraph W["GPU WORKER — 1 per GPU (TP x PP total)"]
+        MR["MODEL RUNNER (GPUModelRunner.execute_model)<br/>input tensors → nn.Module fwd → logits<br/>◄ CUDA graphs, speculative-decode verify"]
+        SMP["SAMPLER<br/>logits → next token"]
+        MR --> SMP
+    end
+    SMP -->|"token → detokenize"| API
+    DP["DP COORDINATOR<br/>load balancing (when data-parallel)"] -.-> EC
 ```
 
 Three shapes to hold:
@@ -75,9 +65,17 @@ HTTP → API server (tokenize) → engine core busy loop:
 
 The subtlety that makes it fast: the engine core can schedule the *next* step while the *previous* step's tokens are still being processed on the GPU (the scheduler tracks in-flight "output placeholders"). That CPU/GPU overlap is why the GPU rarely waits on the scheduler.
 
-### 3.3 Reading the source
+### 3.3 Reading it in vLLM's source (v0.26.0)
 
-The map tells you where to look. The design doc `docs/design/arch_overview.md` is the narrative; then in the V1 tree: `vllm/v1/core/sched/` (scheduler), `vllm/v1/core/block_pool.py` + `kv_cache_manager` (block manager), `vllm/v1/worker/gpu_worker.py` + `gpu_model_runner.py` (worker + model runner), `vllm/v1/sample/sampler.py`. When you hit a symptom, open the box the map points to — don't read top-to-bottom.
+The map tells you *which box to open* — you never read top-to-bottom (ADR-0002: read + reason, don't rewrite). Start with the narrative, [`docs/design/arch_overview.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/arch_overview.md), then jump to the box a symptom points at:
+
+- **Engine core / busy loop** → [`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py): `EngineCore.step()` drives one *schedule → execute → collect* iteration (and `run_busy_loop` repeats it).
+- **Scheduler** → [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py): `Scheduler.schedule()` — continuous batching + chunked prefill (the token budget).
+- **KV-cache manager / block pool** → [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py): `BlockPool.get_new_blocks`/`free_blocks` + the `cached_block_hash_to_block` map (PagedAttention, prefix caching).
+- **Worker + model runner** → [`vllm/v1/worker/gpu_worker.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_worker.py) (`Worker`, one per GPU) and [`vllm/v1/worker/gpu_model_runner.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_model_runner.py): **`GPUModelRunner.execute_model`** preps input tensors, runs the `nn.Module` forward (CUDA graph), then calls the sampler inline.
+- **Sampler** → [`vllm/v1/sample/sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/sampler.py): `Sampler.forward` turns logits into the next token (applying logits processors).
+
+Symptom → box: TTFT → `scheduler.py`; OOM at startup → block-pool profiling; slow decode → `gpu_model_runner.py` (CUDA graphs). Open the one file, not the tree.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -186,6 +184,7 @@ print(llm.generate(["Name the parts of a car engine in one line."])[0].outputs[0
 - **Assuming V1 == V0.** V1 re-architected the scheduler, KV-cache manager, worker, sampler, and API server. Old blog posts describing V0's single-process `LLMEngine.step()` don't match the code you'll read. Confirm you're reading the V1 tree.
 - **Reading the source top-to-bottom.** The map exists so you *don't*. Start from the symptom's component (TTFT → scheduler; OOM at startup → KV-cache profiling / block pool; slow decode → model runner / CUDA graphs) and open that box.
 - **Forgetting the model runner captures CUDA graphs.** If decode is mysteriously slow, check whether `enforce_eager` is on (no graphs) — that's a *model runner* setting, covered in the [tuning-knobs lesson](tuning-knobs-sweep.md).
+- **Thinking the sampler is its own process/stage.** It isn't — the `Sampler` runs **inside** the model runner: `GPUModelRunner.execute_model` calls `self.sampler(logits, …)` in the same GPU-worker process, right after the forward, and logits processors run there too. There's no separate "sampling service" to look at; token-selection latency lives in the worker, next to the forward pass.
 
 ## 7 · Interview links
 
@@ -201,6 +200,7 @@ Further reading:
 - The [continuous-batching](continuous-batching.md) and [PagedAttention](paged-attention.md) lessons — the two boxes inside the engine core, in depth.
 - The [tuning-knobs lesson](tuning-knobs-sweep.md) — how a knob on each box moves the throughput/latency curve (the natural next step).
 - vLLM `docs/usage/v1_guide.md` — what V1 redesigned vs. kept from V0, so you read the right code.
+- vLLM source (v0.26.0): [`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py) (`EngineCore`), [`vllm/v1/worker/gpu_model_runner.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_model_runner.py) (`GPUModelRunner.execute_model`), [`vllm/v1/sample/sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/sampler.py) (`Sampler`) — the boxes from §3.3.
 - The [PagedAttention kernel](../part3/paged-attention-kernel.md) lesson (Part 3) — the code inside the KV-cache-manager box.
 - The [OpenAI server](../part8/openai-server.md) lesson (Part 8) — the API-server box exposed as a production endpoint.
 

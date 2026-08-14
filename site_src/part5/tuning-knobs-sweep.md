@@ -13,7 +13,7 @@ The one mental shift: **there is no universally 'fast' config — only a config 
 
 ## 2 · Mental model
 
-One curve, two ends, and which knob pushes which way:
+One curve, two ends, and which knob pushes which way (the knob-on-a-spectrum map is a conceptual layout, so ASCII, per ADR-0005):
 
 ```text
         THROUGHPUT  ◄─────────────────────────────────────►  LATENCY
@@ -28,9 +28,22 @@ One curve, two ends, and which knob pushes which way:
 
   FREE wins (help both, cost ~nothing):
     enable_prefix_caching (on shared prefixes)   quantization (frees VRAM AND speeds decode)
+```
 
-  the SWEEP loop (how you actually find the setting):
-    fix eval set → change ONE knob → measure (quality, throughput, latency) → keep if trade worth it
+And the method that turns that map into a setting — the **sweep** (a control loop, so Mermaid, per ADR-0005):
+
+```mermaid
+flowchart TB
+    B["baseline: fix the eval set<br/>+ fixed sampling (temperature=0, seed)"] --> M0["measure (quality, throughput, latency)"]
+    M0 --> C["change ONE knob toward your SLO's end"]
+    C --> M["re-measure the (quality, throughput, latency) triple"]
+    M --> D{"trade worth it<br/>for your SLO?"}
+    D -->|"yes"| K["keep the change"]
+    D -->|"no"| R["revert"]
+    K --> N{"more knobs<br/>to sweep?"}
+    R --> N
+    N -->|"yes"| C
+    N -->|"no"| DONE["ship the defended config"]
 ```
 
 Three shapes to hold:
@@ -69,6 +82,16 @@ These all enlarge the [KV-cache budget](paged-attention.md), fitting a bigger [c
 ### 3.5 The method: sweep, don't guess
 
 No table of "recommended values" survives contact with your model, hardware, and traffic. The durable skill is the **sweep**: pick the knob that moves your target end (§2), vary it across a few values, and measure the (quality, throughput, latency) triple against a fixed [eval set](../eval/index.md) — changing *one* knob at a time with fixed sampling (`temperature=0`, fixed `seed`). Keep the setting whose trade you can defend.
+
+### 3.6 Reading it in vLLM's source (v0.26.0)
+
+Every knob here is a typed field on a config dataclass — reading the source is how you learn the *real* default and range for your version instead of trusting a blog (ADR-0002: read + reason):
+
+- **Capacity / KV knobs** live on **`CacheConfig`** ([`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)): `gpu_memory_utilization` is literally `Field(default=0.92, gt=0, le=1)` there, alongside `kv_cache_dtype`, `enable_prefix_caching`, and `block_size`.
+- **Batch-shape knobs** live on **`SchedulerConfig`** ([`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)): `max_num_seqs`, `max_num_batched_tokens`, `enable_chunked_prefill`, `long_prefill_token_threshold`.
+- **The CLI/`LLM(...)` glue** is **`EngineArgs`** ([`vllm/engine/arg_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/engine/arg_utils.py)): it maps `--gpu-memory-utilization`, `--max-num-seqs`, etc. onto those dataclasses in `create_engine_config`. So a flag, its `LLM(...)` kwarg, and the config field are three views of one value — and the field's declaration is the source of truth for its default.
+
+Open `cache.py` and `scheduler.py` and read the field defaults directly; that's the honest version of "what's the default for X?"
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -183,6 +206,7 @@ for gmu in (0.80, 0.90, 0.94):
 - **Forgetting quality in the triple.** Throughput and latency aren't the whole story — a knob that speeds things up but tanks accuracy (aggressive quant, tiny `max_model_len` truncating prompts) is a regression. Always measure the (quality, throughput, latency) *triple* against the eval set.
 - **Non-deterministic sweeps.** `temperature>0` makes re-runs differ by chance, so a "regression" may be noise. Fix sampling (`temperature=0`, `seed`) for every comparison.
 - **Leaving `enforce_eager=True` in production.** It's a debugging/memory-saving flag; it disables CUDA graphs and *raises* decode latency. Don't ship it unless you truly need the VRAM.
+- **Trusting a remembered default instead of the config source.** Defaults drift across vLLM versions, and a knob's *default* changes what your sweep is measured against. The source of truth is the dataclass field — e.g. `gpu_memory_utilization` is `Field(default=0.92)` on `CacheConfig` at 0.26.0 (§3.6); confirm the default/range in [`vllm/config/`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py) for *your* version before quoting it or setting a baseline.
 
 ## 7 · Interview links
 
@@ -195,6 +219,7 @@ for gmu in (0.80, 0.90, 0.94):
 Further reading:
 
 - vLLM `docs/configuration/optimization.md` — the official knob reference and tuning guidance (chunked prefill, `max_num_batched_tokens`).
+- vLLM source (v0.26.0): [`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py) (`CacheConfig`), [`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py) (`SchedulerConfig`), [`vllm/engine/arg_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/engine/arg_utils.py) (`EngineArgs`) — where every knob's real default lives (§3.6).
 - The [Eval Sets](../eval/index.md) — the measurement loop and harness this sweep reuses; the [Capstone](../capstone/index.md) is one big before→after sweep.
 - Every prior Part 5 lesson — each knob exposes a mechanism: [batching](continuous-batching.md), [paging](paged-attention.md), [chunked prefill](scheduler-chunked-prefill-pd.md), [prefix caching](prefix-caching.md), [spec decoding](speculative-decoding.md); and the [architecture map](vllm-architecture-map.md) says which box each turns.
 - [Part 4 Quantization](../part4/index.md) — the biggest capacity knob (weights → KV budget) and the [FP8 KV cache](../part4/quantization-methods.md).

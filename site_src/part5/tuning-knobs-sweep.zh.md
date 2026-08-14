@@ -13,7 +13,7 @@
 
 ## 2 · 心智模型
 
-一条曲线、两端、以及哪个旋钮往哪推：
+一条曲线、两端、以及哪个旋钮往哪推（旋钮落在光谱上的这张图是概念性布局，按 ADR-0005 用 ASCII）：
 
 ```text
         吞吐  ◄─────────────────────────────────────►  延迟
@@ -28,9 +28,22 @@
 
   免费的赢（两端都帮、几乎无代价）：
     enable_prefix_caching（共享前缀上）   quantization（腾 VRAM 且加速 decode）
+```
 
-  SWEEP 循环（你实际怎么找到设置）：
-    固定评测集 → 改一个旋钮 → 测（质量、吞吐、延迟）→ 划算就留
+以及把这张图变成一个设置的方法——**sweep（扫）**（一个控制回路，按 ADR-0005 用 Mermaid）：
+
+```mermaid
+flowchart TB
+    B["baseline: fix the eval set<br/>+ fixed sampling (temperature=0, seed)"] --> M0["measure (quality, throughput, latency)"]
+    M0 --> C["change ONE knob toward your SLO's end"]
+    C --> M["re-measure the (quality, throughput, latency) triple"]
+    M --> D{"trade worth it<br/>for your SLO?"}
+    D -->|"yes"| K["keep the change"]
+    D -->|"no"| R["revert"]
+    K --> N{"more knobs<br/>to sweep?"}
+    R --> N
+    N -->|"yes"| C
+    N -->|"no"| DONE["ship the defended config"]
 ```
 
 三个要记的形状：
@@ -69,6 +82,16 @@
 ### 3.5 方法：sweep，别猜
 
 没有一张「推荐值」表能在你的模型、硬件、流量面前存活。耐久的技能是 **sweep**：挑移动你目标端的旋钮（§2），在几个值上变化它，对着固定的[评测集](../eval/index.md)测（质量、吞吐、延迟）三元组——一次改*一个*旋钮、固定采样（`temperature=0`、固定 `seed`）。保留那个你能为其权衡辩护的设置。
+
+### 3.6 在 vLLM 源码里读它（v0.26.0）
+
+这里每个旋钮都是某个 config dataclass 上的带类型字段——读源码才是弄清*你这个版本*真实默认值与取值范围的办法，而不是信博客（ADR-0002：读懂 + 会推理）：
+
+- **容量 / KV 旋钮**在 **`CacheConfig`**（[`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)）：`gpu_memory_utilization` 在那儿字面就是 `Field(default=0.92, gt=0, le=1)`，同处还有 `kv_cache_dtype`、`enable_prefix_caching`、`block_size`。
+- **批形状旋钮**在 **`SchedulerConfig`**（[`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)）：`max_num_seqs`、`max_num_batched_tokens`、`enable_chunked_prefill`、`long_prefill_token_threshold`。
+- **CLI/`LLM(...)` 粘合层**是 **`EngineArgs`**（[`vllm/engine/arg_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/engine/arg_utils.py)）：它在 `create_engine_config` 里把 `--gpu-memory-utilization`、`--max-num-seqs` 等映射到那些 dataclass。所以一个 flag、它的 `LLM(...)` kwarg、以及 config 字段，是同一个值的三种视图——而字段的声明才是其默认值的权威来源。
+
+打开 `cache.py` 与 `scheduler.py` 直接读字段默认值；那才是「X 的默认值是多少？」的诚实版本。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -183,6 +206,7 @@ for gmu in (0.80, 0.90, 0.94):
 - **忘了三元组里的质量。** 吞吐与延迟不是全部——一个加速却拉垮 accuracy 的旋钮（激进量化、把 prompt 截断的过小 `max_model_len`）是回归。永远对着评测集测（质量、吞吐、延迟）*三元组*。
 - **非确定性 sweep。** `temperature>0` 让重跑随机不同，一个「回归」可能是噪声。每次对比固定采样（`temperature=0`、`seed`）。
 - **生产里留着 `enforce_eager=True`。** 它是调试/省内存 flag；它关掉 CUDA graphs 并*抬高* decode 延迟。除非真需要那点 VRAM，别上线它。
+- **信记忆里的默认值，而非配置源码。** 默认值会跨 vLLM 版本漂移，而一个旋钮的*默认值*决定了你的 sweep 以什么为基准。权威来源是 dataclass 字段——例如 0.26.0 里 `gpu_memory_utilization` 是 `CacheConfig` 上的 `Field(default=0.92)`（§3.6）；引用默认值或设基线前，先在 [`vllm/config/`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py) 里确认*你这个版本*的默认值/范围。
 
 ## 7 · 面试连线
 
@@ -195,6 +219,7 @@ for gmu in (0.80, 0.90, 0.94):
 延伸阅读：
 
 - vLLM `docs/configuration/optimization.md`——官方旋钮参考与调优指南（chunked prefill、`max_num_batched_tokens`）。
+- vLLM 源码（v0.26.0）：[`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)（`CacheConfig`）、[`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)（`SchedulerConfig`）、[`vllm/engine/arg_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/engine/arg_utils.py)（`EngineArgs`）—— §3.6 里每个旋钮真实默认值的所在。
 - [评测集](../eval/index.md)——本 sweep 复用的测量循环与 harness；[Capstone](../capstone/index.md) 就是一次大的 before→after sweep。
 - 之前每节 Part 5 课——每个旋钮暴露一个机制：[batching](continuous-batching.md)、[paging](paged-attention.md)、[chunked prefill](scheduler-chunked-prefill-pd.md)、[prefix caching](prefix-caching.md)、[spec decoding](speculative-decoding.md)；[架构地图](vllm-architecture-map.md) 说每个旋钮拧的是哪个盒子。
 - [Part 4 量化](../part4/index.md)——最大的容量旋钮（权重 → KV 预算）与 [FP8 KV cache](../part4/quantization-methods.md)。

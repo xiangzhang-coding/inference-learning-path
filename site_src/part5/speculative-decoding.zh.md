@@ -13,7 +13,7 @@ Part 5 里其他一切都靠往 GPU 塞更多工作（[continuous batching](cont
 
 ## 2 · 心智模型
 
-便宜地猜一串 token，用一次昂贵的 pass 校验它们：
+便宜地猜一串 token，用一次昂贵的 pass 校验它们（vanilla 对 speculative 的时间线是时序对比，按 ADR-0005 用 ASCII）：
 
 ```text
 VANILLA decode —— 每 token 一次 target forward（每次读全部权重）：
@@ -30,6 +30,19 @@ SPECULATIVE decode —— draft 提议 K 个，target 一次校验 K+1：
 为何近乎免费：decode 是 memory-bound。target 对 K+1 个 token 的 forward 只读
   权重一次（与 1 个 token 相同）；额外 K 个位置用的是 GPU 本来就空闲的计算。
   你把空闲 FLOPs 换成更少的权重读取。
+```
+
+draft 与 target 的一轮交接（一次交互，按 ADR-0005 用 Mermaid `sequenceDiagram`）：
+
+```mermaid
+sequenceDiagram
+    participant D as Draft (cheap)
+    participant T as Target (big)
+    D->>T: propose K tokens [t1' t2' t3' t4']
+    Note over T: ONE forward pass over K+1 positions<br/>(one weight read — decode is memory-bound)
+    T->>T: verify each draft token vs target's own distribution
+    T-->>D: accept longest correct prefix (t1 t2 t3),<br/>reject t4', emit target's own t4 as the bonus token
+    Note over D,T: K+1 tokens emitted from ONE target pass,<br/>output bit-identical to vanilla decode
 ```
 
 三个要记的形状：
@@ -63,6 +76,15 @@ vLLM 的 `method` 选 draft 来源，各是不同的便宜/一致权衡：
 ### 3.3 何时有用——何时无用
 
 Speculative decoding 在**低批量 / 延迟敏感的单流**上闪光，那里 decode 稳稳 memory-bound、GPU 有空闲计算可花在校验上。随着[批变大](continuous-batching.md)、步变 compute-bound（过了 [roofline 屋脊](../part2/roofline-analysis.md)），那「免费」的校验计算不再免费——所以加速缩水，甚至可能变**负**（draft 开销收不回）。这就是为什么它是*延迟*工具，不是吞吐工具：在你服务少量并发请求、想让每个都快时用，而非在用大批打满 GPU 时用。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+猜-验分工映射到两块 V1 代码（ADR-0002：读懂 + 会推理，不重写）：
+
+- **proposer（猜）**在 `vllm/v1/spec_decode/`：[`ngram_proposer.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/spec_decode/ngram_proposer.py) 的 **`NgramProposer`** 靠匹配近期上下文来提议 token，*完全不用 draft 模型*；EAGLE proposer（`eagle.py`）跑那个小小的训练过的 draft 头。跑哪一个由 **`SpeculativeConfig`**（[`vllm/config/speculative.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/speculative.py)）上的 `method` 选，其 `num_speculative_tokens` 就是 §3.1 的 **K**。
+- **校验步**是 **`RejectionSampler`**，在 [`vllm/v1/sample/rejection_sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/rejection_sampler.py)：它拿 draft 提议的 token 加上 target 对全部 K+1 个位置的一次前向 logits，套用「接受最长正确前缀」规则。**精确性保证**（§3.1——输出与 vanilla decode 相同）就落在这里，落在接受规则的定义方式上。
+
+先打开 `ngram_proposer.py`：它是无模型的 K-token proposer，看清整个机制最便宜的入口。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -146,6 +168,7 @@ print(llm.generate([prompt], SamplingParams(max_tokens=64, temperature=0))[0].ou
 - **对新文本选 ngram。** ngram 只提议它能在近期上下文里找到的 token——摘要/编辑/RAG（输出回响输入）极好，开放式生成几乎无用。让 draft 方法匹配负载。
 - **忽略 draft 的代价/质量权衡。** 大而准的 draft 有高 α 但自身 forward 贵；极小的 draft 便宜但 α 低。甜点（EAGLE 存在的原因）是一个*既*便宜*又*与 target 良好对齐的 draft。
 - **忘了 draft 吃 VRAM（ngram 除外）。** `draft_model`/EAGLE 检查点与 target 同占 GPU 显存，减少 [KV-cache 预算](paged-attention.md)。ngram 是零 VRAM 选项。
+- **以为任意 draft 配置都配任意 target。** `draft_model`/EAGLE 检查点必须与 target 同族、同 tokenizer——不匹配的 draft 会拉垮接受率（或干脆加载失败）。而 `num_speculative_tokens` 并非对每种 method 都可随意取：对 MTP 式 draft，vLLM 要求它能**整除** draft 的 `n_predict`，否则 `SpeculativeConfig` 会在启动时报错。选一个该 method 支持的 K，以及一个为*你的* target 训练的 draft。
 
 ## 7 · 面试连线
 
@@ -159,6 +182,7 @@ print(llm.generate([prompt], SamplingParams(max_tokens=64, temperature=0))[0].ou
 
 - Leviathan 等 / Chen 等——原始 *speculative decoding* / *speculative sampling* 论文（接受/拒绝规则及其精确性证明）。
 - vLLM `docs/features/speculative_decoding/`——`ngram`、`eagle`/`eagle3`、`draft_model` 配置及其权衡。
+- vLLM 源码（v0.26.0）：[`vllm/v1/spec_decode/ngram_proposer.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/spec_decode/ngram_proposer.py)（`NgramProposer`）、[`vllm/v1/sample/rejection_sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/rejection_sampler.py)（`RejectionSampler`）、[`vllm/config/speculative.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/speculative.py)（`SpeculativeConfig`）—— §3.4 的提议/校验/配置代码。
 - [推理流程课](../part0/inference-flow.md) 与 [roofline](../part2/roofline-analysis.md)——为何 decode memory-bound（前提）、批在哪转 compute-bound（收益在哪消退）。
 - [continuous-batching 课](continuous-batching.md)——speculative decoding *不*触及的吞吐轴；两者互补。
 
