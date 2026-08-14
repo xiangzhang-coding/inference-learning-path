@@ -15,22 +15,39 @@ LLM 从机制上看就是一个跑在循环里的**下一个 token 预测器**�
 
 ## 2 · 心智模型
 
+自回归把推理逼成**两种资源画像相反的状态**。控制流让这个不对称一目了然——一次前向进去，然后进入循环：
+
+```mermaid
+flowchart TD
+    P["Prompt — S tokens"] --> PF["Prefill: one forward pass<br/>all S tokens in parallel<br/>write KV for every token<br/>COMPUTE-BOUND"]
+    PF --> T1["Emit first token"]
+    T1 --> DEC["Decode step: re-read all weights<br/>+ the whole KV cache<br/>compute exactly one token<br/>MEMORY-BOUND"]
+    DEC --> AP["Append token · write its KV<br/>(cache grows by one)"]
+    AP --> Q{"EOS?"}
+    Q -->|no| DEC
+    Q -->|yes| DONE(["Done"])
+```
+
+**怎么读这张图。** Prefill 是*一个*方框：整段 prompt 走一次前向，因为所有 $S$ 个 token 同时在场，GPU 把每个权重跨所有 token 复用——每搬一字节做很多算术。Decode 是一个*循环*：每一圈都重读整个模型*和*整个 KV 缓存，只为吐出一个 token，然后把这个 token 的 KV 写回、再问一句「EOS 了吗？」。这条循环边就是生成之所以慢的全部原因——Part 4–7 里几乎所有东西都在攻击它。
+
+这张流程图刻意藏起一个值得单独看的细节：**KV 缓存每个 decode 步恰好增长一个 token**。Prefill 一次写好；之后每个 decode 步把它延长一格：
+
 ```text
-PREFILL  （一次前向，所有 prompt token 并行）
-  prompt = [The  capital  of  France  is]        5 个 token，一次看完
+PREFILL  (one pass, all prompt tokens in parallel)
+  prompt = [The  capital  of  France  is]        5 tokens, seen at once
              |    |       |    |      |
              v    v       v    v      v
            ┌───────────────────────────┐
-           │      一次大前向             │  -> 写入全部 5 个 token 的 K,V
-           └───────────────────────────┘  -> 产出答案第 1 个 token："Paris"
+           │   one big forward pass     │  -> writes K,V for all 5 tokens
+           └───────────────────────────┘  -> emits token #1 of the answer:  "Paris"
 
-DECODE   （循环，每步一个 token，每步复用此前全部 K,V）
-  step 1:  [... Paris]              复用 KV(prompt);          写 KV(Paris)   -> "."
-  step 2:  [... Paris .]            复用 KV(prompt,Paris);    写 KV(.)       -> "It"
-  step 3:  [... Paris . It]         复用 KV(...);             写 KV(It)      -> "is"
-  ...                                                                        （直到 EOS）
+DECODE   (a loop, one token per step, each step reuses all prior K,V)
+  step 1:  [... Paris]              reuse KV(prompt);      write KV(Paris)   -> "."
+  step 2:  [... Paris .]            reuse KV(prompt,Paris);write KV(.)       -> "It"
+  step 3:  [... Paris . It]         reuse KV(...);         write KV(It)      -> "is"
+  ...                                                                        (until EOS)
              \___________________/
-              KV 缓存：prefill 时一次大写入，之后每个 decode 步 +1 个 token
+              the KV cache: one big write during prefill, then +1 token per decode step
 ```
 
 脑中要记住两个形状：
@@ -61,6 +78,8 @@ I_{\text{decode}}(S) \;\approx\; \frac{2N}{\underbrace{Nb}_{\text{权重}} + \un
 $$
 
 强度**被钉在 1 FLOP/字节 附近**，且只会随上下文增长而*下降*。一张 4090 每字节带宽能做几百 FLOPs，于是在强度 ≈ 1 时算术单元约 99% 空闲、干等 HBM——**decode 是 memory-bound。**
+
+**把两式并排读。** 分母是*一样*的（权重 + KV）；分子才是全部差别。Prefill 的分子随 prompt 增长——$2NS$——所以强度随 $S$ 攀升。Decode 的分子被冻在 $2N$（一个 token），所以强度只会随 KV 项增大而*下降*。把「compute-bound」与「memory-bound」分开的那条线，是 GPU 的 **ridge point（脊点）**——峰值 FLOP/s ÷ 内存带宽。一张 4090 落在几百 FLOP/字节 这个量级（$\approx 165\ \text{TFLOP/s} \div 1\ \text{TB/s}$，BF16）。Prefill 一举越过脊点、进入 compute-bound 区；decode 钉在 1 附近，落在脊点**下方 100× 以上**——妥妥的 memory-bound。这正是你将在 [Part 2](../part2/roofline-analysis.md) 里量化的 roofline 图景。
 
 这个不等式也解释了延迟度量：**TTFT**（首 token 延迟）由 prefill 主导（要等整段 prompt 被消化完，第一个 token 才出现）；**TPOT**（每输出 token 时间）由 decode 主导（每步的内存搬运）。它们的正式定义与测量是 Part 0B 的活（票 #5）；这里只需建立因果链。→ [TTFT、TPOT](../glossary.md)。
 

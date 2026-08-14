@@ -15,6 +15,23 @@ These two regimes are so different in their resource profile that the whole fiel
 
 ## 2 · Mental model
 
+Autoregression forces inference into **two regimes with opposite resource profiles**. The control flow makes the asymmetry obvious — one pass in, then a loop:
+
+```mermaid
+flowchart TD
+    P["Prompt — S tokens"] --> PF["Prefill: one forward pass<br/>all S tokens in parallel<br/>write KV for every token<br/>COMPUTE-BOUND"]
+    PF --> T1["Emit first token"]
+    T1 --> DEC["Decode step: re-read all weights<br/>+ the whole KV cache<br/>compute exactly one token<br/>MEMORY-BOUND"]
+    DEC --> AP["Append token · write its KV<br/>(cache grows by one)"]
+    AP --> Q{"EOS?"}
+    Q -->|no| DEC
+    Q -->|yes| DONE(["Done"])
+```
+
+**How to read it.** Prefill is a *single* box: the whole prompt goes through one forward pass, and because all $S$ tokens are present at once, the GPU reuses each weight across all of them — lots of math per byte loaded. Decode is a *loop*: every trip re-reads the entire model *and* the whole KV cache just to emit one token, then writes that token's KV back and asks "EOS?". That loop edge is the whole reason generation is slow — and nearly everything in Parts 4–7 is an attack on it.
+
+The flowchart deliberately hides one detail worth seeing on its own: the **KV cache grows by exactly one token per decode step**. Prefill writes it in one shot; every decode step extends it by one:
+
 ```text
 PREFILL  (one pass, all prompt tokens in parallel)
   prompt = [The  capital  of  France  is]        5 tokens, seen at once
@@ -61,6 +78,8 @@ I_{\text{decode}}(S) \;\approx\; \frac{2N}{\underbrace{Nb}_{\text{weights}} + \u
 $$
 
 Intensity is **pinned near 1 FLOP/byte** and only *drops* as context grows. A 4090 can do ~hundreds of FLOPs per byte of bandwidth, so at intensity ≈ 1 the math units sit ~99% idle waiting on HBM — **decode is memory-bound.**
+
+**Reading the two side by side.** The denominator is the *same* (weights + KV); the numerator is the entire difference. Prefill's numerator scales with the prompt — $2NS$ — so intensity climbs with $S$. Decode's numerator is frozen at $2N$ (one token), so intensity can only *fall* as the KV term grows. The line that separates "compute-bound" from "memory-bound" is the GPU's **ridge point** — peak FLOP/s ÷ memory bandwidth. On a 4090 that lands in the low hundreds of FLOP/byte ($\approx 165\ \text{TFLOP/s} \div 1\ \text{TB/s}$, BF16). Prefill sails past the ridge into the compute-bound region; decode, pinned near 1, sits **more than 100× below** it — squarely memory-bound. This is exactly the roofline picture you will make quantitative in [Part 2](../part2/roofline-analysis.md).
 
 This single inequality explains the latency metrics too: **TTFT** (Time To First Token) is dominated by prefill (you wait for the whole prompt to be digested before the first token appears); **TPOT** (Time Per Output Token) is dominated by decode (each step's memory traffic). Their formal definitions and measurement are Part 0B's job (ticket #5); here we only need the causal link. → [TTFT, TPOT](../glossary.md).
 

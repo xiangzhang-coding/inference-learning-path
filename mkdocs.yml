@@ -272,7 +272,15 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      # ADR-0005: Mermaid for flow/sequence/state/topology diagrams.
+      # Material's native Mermaid.js support activates on this custom_fence
+      # (verified against Material official docs via Context7). Labels stay
+      # English in both language trees (ADR-0005) — zero-translation reuse.
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.inlinehilite
   - pymdownx.highlight:
       anchor_linenums: true

@@ -3,6 +3,7 @@
 
 # tooling
 .claude/
+.playwright-mcp/
 
 # MkDocs build output
 site/
