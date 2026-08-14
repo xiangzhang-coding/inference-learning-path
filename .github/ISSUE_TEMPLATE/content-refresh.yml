@@ -1,0 +1,79 @@
+# Canonical refresh recipe lives on the site's "Versioning & How to Refresh" page
+# (site_src/versioning.md). Keep the checklist below in sync with it.
+name: "Content refresh / vLLM version upgrade（内容刷新 / vLLM 版本升级）"
+description: "Report version drift or bump the baseline — flags/APIs that changed, code that won't run, numbers that feel off, or shifted source-read-along anchors. 报告版本漂移或升级基线。"
+title: "[refresh] "
+labels: ["content-refresh"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for **version drift** or a deliberate **baseline bump**. This repo pins **vLLM 0.26.0** and verifies statically (Context7 for API/flag/CLI, Sonar for concepts) — numbers are **illustrative / order-of-magnitude references** (ADR-0004). The refresh recipe lives on the site's **Versioning & How to Refresh** page.
+
+        用于**版本漂移**或刻意的**基线升级**。本仓库钉定 **vLLM 0.26.0**、静态核实（Context7 核 API/flag/CLI，Sonar 核概念）——数字为**示例 / 量级参考**（ADR-0004）。刷新步骤见站点「版本 & 如何刷新」页。
+
+  - type: dropdown
+    id: refresh-type
+    attributes:
+      label: "Type of refresh（刷新类型）"
+      description: "Pick all that apply. 多选。"
+      multiple: true
+      options:
+        - "vLLM major/minor upgrade（vLLM 大/小版本升级）"
+        - "API / flag / CLI drift（API / flag / CLI 漂移）"
+        - "Code won't run on current release（代码在当前版本跑不通）"
+        - "Illustrative number feels off（示例数字明显偏离）"
+        - "Source read-along anchors shifted (Part 2/3/5)（源码导读锚点漂移）"
+        - "Other（其他）"
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: "Version（版本）"
+      description: "Baseline → target. 基线 → 目标。"
+      placeholder: "0.26.0 → 0.2x.y"
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected
+    attributes:
+      label: "Affected pages / paths（受影响页面 / 路径）"
+      description: "site_src paths, page titles, or flags/symbols. 列出 site_src 路径、页面标题，或 flag/符号。"
+      placeholder: |
+        - site_src/part5/scheduler-chunked-prefill-pd.md — flag `--foo` renamed
+        - site_src/part3/paged-attention-kernel.md — symbol/line anchors moved
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "What's wrong + evidence（问题 + 证据）"
+      description: "What changed and how you know. Quote the Context7/Sonar source or the error. 改了什么、你怎么确认的；贴 Context7/Sonar 来源或报错。"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: recipe
+    attributes:
+      label: "Refresh recipe（刷新步骤 · Definition of Done）"
+      description: "Follow the site's Versioning & How to Refresh page. 遵循站点「版本 & 如何刷新」页。"
+      options:
+        - label: "Bumped the page-top version callout + Home baselines table（升级页顶版本 callout + 首页基线表）"
+        - label: "Re-verified every touched flag / API / CLI via Context7 against the new version（用 Context7 对新版本重核每个动过的 flag/API/CLI）"
+        - label: "Re-verified concept / paper / spec claims via Sonar where touched（动过处用 Sonar 重核概念/论文/规格）"
+        - label: "Re-aligned source read-along file / symbol / line anchors to the new tag (Part 2/3/5)（把源码导读锚点对齐新 tag）"
+        - label: "Re-ran Labs on my own box to recalibrate any numbers I changed (else left them illustrative)（自测重跑校准改动的数字，否则保持示例标注）"
+        - label: "`mkdocs build --strict` stays green（构建仍绿）"
+        - label: "EN default + ZH translation both updated, page-for-page aligned（英文默认 + 中文译文同步、逐页对齐）"
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: "Notes（备注）"
+      description: "Anything else. 其他补充。"
+    validations:
+      required: false

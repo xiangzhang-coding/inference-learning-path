@@ -37,6 +37,8 @@ The sample lesson **[KV Cache](part0/kv-cache.md)** demonstrates the full skelet
 !!! warning "On the numbers in this site"
     All performance figures are **illustrative / order-of-magnitude references**. Following ADR-0004, lessons are **statically verified via Context7, not executed** — you reproduce the real numbers yourself on your own AutoDL box.
 
+See **[Versioning & How to Refresh](versioning.md)** for what's pinned, why the numbers are illustrative, and the recipe for refreshing content when vLLM upgrades.
+
 ## GPU callout convention
 
 Any page or code block that needs a GPU carries a callout like this:

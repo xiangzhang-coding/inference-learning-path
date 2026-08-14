@@ -119,6 +119,7 @@ nav:
       - "Large set": eval/large.md
   - Capstone: capstone/index.md
   - Glossary: glossary.md
+  - "Versioning & How to Refresh": versioning.md
 
 theme:
   name: material
@@ -260,6 +261,7 @@ plugins:
             "Large set": "大评测集"
             Capstone: Capstone 实战
             Glossary: 术语表
+            "Versioning & How to Refresh": "版本 & 如何刷新"
 
 markdown_extensions:
   - admonition
