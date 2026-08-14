@@ -128,6 +128,15 @@ Shared-memory bank conflicts — worst-case lanes on one bank (ideal = 1):
 
 两种效应都是纯寻址：*值*没变，只是 32 条 lane 索要哪些字节变了。步长 1 → 步长 32 的塌缩（100% → 12.5% HBM 效率；1-way → 32-way bank 串行）与步长 33 的恢复，就是 kernel 死磕布局的全部理由。
 
+### 在 vLLM 源码里读它（v0.26.0）
+
+vLLM 把这节课的两根杠杆都焊进了它的 KV-cache 写入路径。两个锚点：
+
+- **布局**——[`vllm/v1/attention/ops/paged_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/ops/paged_attn.py) 里的 `PagedAttention.split_kv_cache` 算出 `x = 16 // kv_cache.element_size()`，并把 key cache 视作 `[num_blocks, num_kv_heads, head_size // x, -1, x]`。末尾那个 `x`（FP16 下 = 8）把 `head_size` 分成 **16 字节的块**——正是 §6 提醒的对齐，这样选是为了让每个线程的 load 是一次对齐的单事务。这是把 coalescing 设计进*数据结构*本身，而不只是访问方式。
+- **kernel**——写入本身是 [`csrc/libtorch_stable/cache_kernels.cu`](https://github.com/vllm-project/vllm/blob/v0.26.0/csrc/libtorch_stable/cache_kernels.cu) 里的 `reshape_and_cache_kernel`（由宿主 `reshape_and_cache` 派发，`vllm/_custom_ops.py` 把它暴露为 `ops.reshape_and_cache`）。它设 `constexpr int VEC_SIZE = (sizeof(scalar_t) == 2) ? 8 : 4;`——**8 个 FP16 元素 = 每次向量存储 16 字节**——并通过 `vectorize_with_alignment<VEC_SIZE>(...)` 搬数据。flash 变体 `reshape_and_cache_flash_kernel` 按 warp lane 跨步（`vectorize_with_alignment<VEC_SIZE>(k_src_h, k_dst_h, head_size, lane, 32, ...)`）：连续 lane 写连续元素——正是 §3.1 的 coalesced 模式，写在一个生产 kernel 里。
+
+你不会重写这些（ADR-0002——读 + 调，不手写），但你现在能读出 `VEC_SIZE`、那个 `x` 切分、以及 `lane, 32` 跨步并叫出它们的名字：*向量化的 16 字节对齐存储，布局与索引都让 warp coalesce。*
+
 ## 5 · Lab —— 在真实 HBM 上对比 coalesced 与 strided 带宽
 
 !!! gpu "GPU Lab"
@@ -180,6 +189,7 @@ print("(same 256 MiB of data; only the access pattern differs)")
 - **broadcast 不是冲突。** 全部 32 条 lane 读*同一个* shared 字是免费的（硬件广播）。冲突是 lane 命中*同一* bank 里*不同*的字——别把两者混了。
 - **coalescing ≠ L2 缓存。** coalescing 关乎*一个 warp* 每条指令的 32 个地址折成少数事务。一个步长 kernel 随时间也许仍有 L2 命中，但它已付了每-warp 的事务税——不同机制，不同修法。
 - **`.contiguous()` 会拷贝。** 调它为下游 kernel 修好访存模式，但要花一整遍扫过数据；别盲目乱撒——先弄清复用是否值回这次拷贝。
+- **coalescing 不是唯一的带宽杠杆——向量宽度也是。** 在 coalesced 的基础上，一个 warp 用 **128-bit（16 字节）向量化 load/store**（`float4`、`__ldg`）能比 32-bit 标量的每条指令搬更多字节——同样的流量、更少的指令。`reshape_and_cache` 正是这么做的（`VEC_SIZE = 8` 个 FP16 元素 = 每次存储 16 字节，经 `vectorize_with_alignment`）。coalesced *且*宽，胜过 coalesced *且*窄——这也是为何对齐（上面 §6）重要：一次 16 字节向量操作需要一个 16 字节对齐的地址。
 
 ## 7 · 面试连线
 

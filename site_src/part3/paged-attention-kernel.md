@@ -13,7 +13,7 @@ Here's the one idea. A naive engine stores each sequence's [KV cache](../part0/k
 
 ## 2 · Mental model
 
-The virtual-memory analogy, and the kernel's loop:
+The virtual-memory analogy — physical placement is arbitrary, the block table restores logical order (a spatial layout, so ASCII, per ADR-0005):
 
 ```text
 LOGICAL view (what attention wants)        PHYSICAL view (how vLLM stores it)
@@ -26,14 +26,18 @@ LOGICAL view (what attention wants)        PHYSICAL view (how vLLM stores it)
       logical blk 1 ─► physical blk 1      │      │      │      │ tok3 │      │
                                            └──────┴──────┴──────┴──────┴──────┘
   (physical order is arbitrary; the block table restores logical order)
+```
 
-THE KERNEL (one query, its KV scattered across blocks):
-  for logical_blk in seq.block_table:        # walk this sequence's blocks
-      phys = block_table[logical_blk]         # logical -> physical
-      K_blk, V_blk = k_cache[phys], v_cache[phys]
-      s = Q · K_blkᵀ                          # scores for this block's tokens
-      update running (m, l, acc) with ONLINE SOFTMAX   # same trick as FlashAttention
-  out = acc / l
+And the kernel's gather loop — one query walking its scattered blocks (a flow, so Mermaid, per ADR-0005):
+
+```mermaid
+flowchart TB
+    S["for each logical block in seq.block_table"] --> M["phys = block_table at that index<br/>(logical → physical)"]
+    M --> LD["load K_blk, V_blk from k_cache / v_cache at phys"]
+    LD --> SC["s = Q · K_blkᵀ<br/>(scores for this block's tokens)"]
+    SC --> OS["update running (m, l, acc)<br/>with ONLINE SOFTMAX<br/>(the FlashAttention trick, per block)"]
+    OS -->|"more blocks"| S
+    OS -->|"done"| OUT["out = acc / l"]
 ```
 
 Three shapes to hold:
@@ -44,7 +48,7 @@ Three shapes to hold:
 
 ## 3 · Principle & reading the source
 
-The files to open: the design doc `docs/design/paged_attention.md` (the narrative), the CUDA kernel in `csrc/attention/`, and the Python wrapper `vllm/.../attention/ops/paged_attn.py`. Here's the map.
+The files to open: the design doc [`docs/design/paged_attention.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/paged_attention.md) (the narrative + kernel pseudocode — shipped at v0.26.0, though it now describes the *classic* kernel design rather than the exact code the V1 engine runs), and the V1 layout helper [`vllm/v1/attention/ops/paged_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/ops/paged_attn.py). Here's the map.
 
 ### 3.1 The paged KV-cache layout
 
@@ -164,6 +168,16 @@ max abs diff = 1.11e-16   (paged == dense; blocks are just storage)
 
 The difference is machine epsilon. Paging changes *where* KV lives and *how* the kernel reaches it — never *what* attention computes. That is the whole license for PagedAttention: near-zero memory waste and block sharing, at the price of a gather the kernel absorbs.
 
+### Reading it in vLLM's source (v0.26.0)
+
+Three anchors turn §3's map into clickable code — with one honest caveat about what the V1 engine actually runs:
+
+- **The layout + write path (live V1 code).** [`vllm/v1/attention/ops/paged_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/ops/paged_attn.py) is short and real: `PagedAttention.split_kv_cache` computes `x = 16 // kv_cache.element_size()` and returns `key_cache.view(num_blocks, num_kv_heads, head_size // x, -1, x)` (the coalescing-aware layout of §3.1), and `write_to_paged_cache` calls `ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping.flatten(), ...)` — the scatter-by-`slot_mapping` of §3.2 (`ops` is `vllm/_custom_ops.py`'s `reshape_and_cache`).
+- **The kernel design (the narrative).** [`docs/design/paged_attention.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/paged_attention.md) carries the kernel signature (`q [num_seqs, num_heads, head_size]`, `k_cache [num_blocks, num_kv_heads, head_size/x, block_size, x]`, template args `BLOCK_SIZE`, `PARTITION_SIZE`) and the block-loop pseudocode you mapped in §3.3. Read it for the *design*.
+- **The caveat (what actually runs).** At v0.26.0 the standalone legacy `paged_attention_v1/v2` CUDA kernel is **no longer the default decode path** — the V1 engine dispatches attention through its backends (FlashAttention / FlashInfer), which implement the *same* paged-KV contract. The one you'll actually step through is `FlashAttentionImpl.forward(...)` in [`vllm/v1/attention/backends/flash_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/flash_attn.py) (the [FlashAttention lesson](../part2/flash-attention.md) opens it): it takes Q/K/V **plus the block tables** and hands them to the fused kernel that gathers paged KV. The design doc's block-loop is still the clearest *explanation* of what that kernel does inside.
+
+You won't rewrite any of it (ADR-0002 — read + tune, don't hand-author). But you can now open `paged_attn.py`, confirm the `x`-split layout and the `slot_mapping` write in a dozen lines of real Python, then read the design doc's pseudocode as the annotated version of §4's `paged_attention()`.
+
 ## 5 · Lab — read the real kernel
 
 !!! gpu "GPU Lab (optional verification)"
@@ -178,13 +192,15 @@ The core lab is **reading**, doable entirely in AutoDL no-card mode (free):
 ```text
 Reading checklist — trace one query through the source:
 1. Open docs/design/paged_attention.md — read the "Inputs" and layout sections.
-2. In vllm/.../attention/ops/paged_attn.py, find split_kv_cache:
-     - confirm x = 16 // element_size, and the [num_blocks, num_kv_heads, head_size//x, block_size, x] view.
-3. In csrc/attention/, find the block loop:
+2. In vllm/v1/attention/ops/paged_attn.py, find split_kv_cache:
+     - confirm x = 16 // element_size, and the (num_blocks, num_kv_heads, head_size//x, -1, x) view.
+3. In docs/design/paged_attention.md's kernel pseudocode, find the block loop:
      - locate where block_table maps logical -> physical block index,
      - locate the online-softmax running max / sum / accumulator,
      - locate the PARTITION_SIZE branch (the v1 vs v2 split) and the max_num_partitions output dim.
-4. Map each to a line of §4's paged_attention(): block-table walk, per-block gather, online-softmax fold.
+4. In vllm/v1/attention/backends/flash_attn.py, find FlashAttentionImpl.forward — the live V1
+     decode path; confirm it takes the block tables and hands paged KV to the fused kernel.
+5. Map each to a line of §4's paged_attention(): block-table walk, per-block gather, online-softmax fold.
 ```
 
 Optional GPU verification: launch vLLM with `Qwen2.5-7B-Instruct` and a small `--max-model-len`, send a few requests, and watch KV-block usage in the logs / metrics — you'll see blocks allocated on demand as sequences grow, not reserved up front. (The full serving picture is the Part 5 lesson; here it's just confirmation that the block pool behaves like §4's `k_pool`.)
@@ -197,6 +213,7 @@ Optional GPU verification: launch vLLM with `Qwen2.5-7B-Instruct` and a small `-
 - **Assuming block tables are contiguous or ordered.** Physical blocks are allocated wherever there's room; the block table (and `slot_mapping`) is the only thing tying them to logical order. That freedom is the point — it's what kills fragmentation and enables sharing.
 - **Reading the kernel expecting one contiguous KV read.** The gather (block loop) is the defining difference from a dense-KV attention kernel; if you're looking for a single strided load over the whole sequence, you'll miss the structure.
 - **Over-claiming the serving story here.** *How* paging raises throughput (continuous batching, the block manager, prefix caching) is a systems topic — this lesson is about reading the kernel that makes it possible.
+- **Assuming the design-doc kernel is what runs today.** At v0.26.0 the standalone `paged_attention_v1/v2` CUDA kernel is **no longer the default decode path** — the V1 engine dispatches through FlashAttention/FlashInfer backends implementing the *same* paged-KV contract (block tables, `slot_mapping`). The design doc is the clearest *explanation* of the gather + online-softmax loop; `FlashAttentionImpl.forward` is what actually executes. Read the doc for the idea, the backend for the code — and don't cite `paged_attention_v1/v2` as "current" in an interview.
 
 ## 7 · Interview links
 

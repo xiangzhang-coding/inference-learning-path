@@ -13,22 +13,32 @@
 
 ## 2 · 心智模型
 
-启动层级，以及各自映射到什么硬件：
+启动层级，以及各自映射到什么硬件（一张*拓扑*图，用一张 Mermaid，遵循 ADR-0005；图内标签保持英文）：
+
+```mermaid
+flowchart LR
+    subgraph SW["SOFTWARE — what you launch"]
+        direction TB
+        G["grid"] -->|"many"| B["block<br/>(≤ 1024 threads)"]
+        B -->|"chopped into"| W["warp = 32 threads<br/>the real unit of execution"]
+    end
+    subgraph HW["HARDWARE — what it runs on"]
+        direction TB
+        GPU["GPU"] -->|"many"| SM["SM<br/>streaming multiprocessor"]
+        SM --> WS["warp scheduler<br/>issues 1 instruction / 32 lanes (SIMT)"]
+    end
+    G -.->|"grid sprayed across all SMs"| GPU
+    B -.->|"one block → ONE SM, never split"| SM
+    W -.->|"a warp is issued by"| WS
+```
+
+时延隐藏是这套层级的*要义*——一个数值画面，图里刻意略去：
 
 ```text
-你启动的 SOFTWARE                          它跑在的 HARDWARE
-──────────────────────                    ─────────────────────
-grid  ── 多个 ──►  block                    GPU ── 多个 ──► SM（streaming multiprocessor）
-                     │                                        │
-block ── ≤1024 ──► thread                  一个 block 被指派给某一个 SM（永不拆分）
-                     │                                        │
-32 线程     ═══►  1 个 WARP  ◄══ 真正的执行单位 ══►            warp scheduler
-                                            为全部 32 条 lane 发射一条指令（SIMT）
-
-时延隐藏（这一切的要义）
-  SM 最多驻留 48 个 warp（cc 8.9）。 warp A 发起一次 load ─► stall ~400 周期
-     │                                       scheduler 立刻去跑 warp B、C、D…
-     └─ occupancy = 驻留 warp / 48  ──►  驻留 warp 越多 ⇒ 隐藏这次 stall 的余量越大
+LATENCY HIDING (the point of it all)
+  SM holds up to 48 warps resident (cc 8.9).  Warp A issues a load ─► stalls ~400 cyc
+     │                                          scheduler instantly runs warp B, C, D…
+     └─ occupancy = resident warps / 48  ──►  more resident warps ⇒ more slack to hide the stall
 ```
 
 三个要抓住的形状：
@@ -133,6 +143,15 @@ warps                         : 8
 
 两种布局都让一半线程走每条路径——算术完全相同。interleaved 那个纯粹因为分支劈开了每个 warp 而付 **2×**。这就是 SIMT divergence 的全部教训：让 warp *内部*的控制流保持一致。
 
+### 在 vLLM 源码里读它（v0.26.0）
+
+§2 那个抽象的启动层级，在每个 vLLM CUDA kernel 里都是一段具体的启动配置。最好读的是融合的 SiLU-and-multiply 激活，[`csrc/libtorch_stable/activation_kernels.cu`](https://github.com/vllm-project/vllm/blob/v0.26.0/csrc/libtorch_stable/activation_kernels.cu)：
+
+- 宿主启动器 `silu_and_mul` 用宏 `LAUNCH_ACTIVATION_GATE_KERNEL`，它的 grid/block 恰是 §3.1 的层级：**`dim3 grid(num_tokens)`**——每 token 一个 block、撒到各 SM 上——与 **`dim3 block(std::min(d, 1024))`**——每 block 的线程数，硬顶在指南给的 1024 上（向量化路径用 `std::min(d / vec_size, 1024)`）。
+- 在 `__global__ void act_and_mul_kernel` 内，block 用 **`blockIdx.x`** 索引自己那个 token（`input + blockIdx.x * 2 * d`）——「一个 block 驻留在一个 SM 上」的字面化——而每个线程用 **`for (int i = threadIdx.x; i < d; i += blockDim.x)`** 跨步处理自己那片。连续的 `threadIdx.x` 触碰连续元素，于是 warp 的 32 条 lane 被 [coalesce](memory-access.md)——启动配置与访存模式，正是本 Part 的两根杠杆，六行代码里都在。
+
+你不会写这个 kernel（ADR-0002——读 + 调，不手写），但你现在能打开它、把 grid/block 维度读成*它们编码的 SM-映射决定*：scheduler 撒出多少 block，每个 SM 试图驻留多少 warp（`block/32`）。
+
 ## 5 · Lab —— 看见机器，并看着时延隐藏起效
 
 !!! gpu "GPU Lab"
@@ -189,6 +208,7 @@ for elems in (2**12, 2**16, 2**20, 2**24, 2**26):      # 4K … 67M float32
 - **以为一个线程该做很多事。** GPU 想要*许多微小*的线程，好让 scheduler 总有就绪 warp。少数重线程会饿死时延隐藏机器。
 - **`__syncthreads()` 是 block 内的，不是 grid 内的。** 它是*一个 block* 内线程的 barrier；一个 kernel 内没有便宜的跨 grid 全局 barrier。跨 block 协调意味着一次新的 kernel 启动（正是 [CUDA graphs](../part2/kernel-fusion-cuda-graphs.md) 那节课攻击的开销）。
 - **warp 大小并非通用。** 它在迄今每块 NVIDIA GPU 上都是 32，但 AMD wavefront 是 64。别把 32 焊进对非 NVIDIA 硬件的可移植推理里。
+- **尾效应（wave quantization）。** 一个 grid 以 block 的*波（wave）*铺过各 SM；若 block 数不是 (SMs × 每-SM block 数) 的整数倍，**最后一波会让部分 SM 闲着**——一个 100% occupancy 的 kernel 仍可能浪费掉一整波的机器。它在波数*少*时咬得最狠（小 grid，如 read-along 里 batch 很小的 `dim3 grid(num_tokens)` decode 启动）；有上千个 block 时一次半空的波只是噪声。这是 occupancy 的盲区——与驻留-warp 的 occupancy 不同，也是 batch 1 填不满 GPU 的又一原因。
 
 ## 7 · 面试连线
 

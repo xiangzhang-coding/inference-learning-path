@@ -13,7 +13,7 @@
 
 ## 2 · 心智模型
 
-虚拟内存类比，以及 kernel 的循环：
+虚拟内存类比——物理摆放是任意的，block table 还原逻辑顺序（一张空间布局图，用 ASCII，遵循 ADR-0005）：
 
 ```text
 LOGICAL 视图（attention 想要的）           PHYSICAL 视图（vLLM 如何存）
@@ -26,14 +26,18 @@ LOGICAL 视图（attention 想要的）           PHYSICAL 视图（vLLM 如何�
       逻辑 blk 1 ─► 物理 blk 1             │      │      │      │ tok3 │      │
                                            └──────┴──────┴──────┴──────┴──────┘
   （物理顺序是任意的；block table 还原逻辑顺序）
+```
 
-KERNEL（一个 query，它的 KV 散在各块）：
-  for logical_blk in seq.block_table:        # 走这条序列的块
-      phys = block_table[logical_blk]         # 逻辑 -> 物理
-      K_blk, V_blk = k_cache[phys], v_cache[phys]
-      s = Q · K_blkᵀ                          # 这一块 token 的 scores
-      用 ONLINE SOFTMAX 更新运行 (m, l, acc)  # 和 FlashAttention 同一个技巧
-  out = acc / l
+以及 kernel 的 gather 循环——一个 query 走它散落的块（一段流程，用 Mermaid，遵循 ADR-0005；图内标签保持英文）：
+
+```mermaid
+flowchart TB
+    S["for each logical block in seq.block_table"] --> M["phys = block_table at that index<br/>(logical → physical)"]
+    M --> LD["load K_blk, V_blk from k_cache / v_cache at phys"]
+    LD --> SC["s = Q · K_blkᵀ<br/>(scores for this block's tokens)"]
+    SC --> OS["update running (m, l, acc)<br/>with ONLINE SOFTMAX<br/>(the FlashAttention trick, per block)"]
+    OS -->|"more blocks"| S
+    OS -->|"done"| OUT["out = acc / l"]
 ```
 
 三个要抓住的形状：
@@ -44,7 +48,7 @@ KERNEL（一个 query，它的 KV 散在各块）：
 
 ## 3 · 原理与读源码
 
-要打开的文件：设计文档 `docs/design/paged_attention.md`（叙事）、`csrc/attention/` 里的 CUDA kernel、以及 Python 封装 `vllm/.../attention/ops/paged_attn.py`。这是地图。
+要打开的文件：设计文档 [`docs/design/paged_attention.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/paged_attention.md)（叙事 + kernel 伪代码——v0.26.0 随发，但它描述的是*经典*kernel 设计，而非 V1 引擎实际跑的代码），以及 V1 布局助手 [`vllm/v1/attention/ops/paged_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/ops/paged_attn.py)。这是地图。
 
 ### 3.1 paged KV-cache 布局
 
@@ -164,6 +168,16 @@ max abs diff = 1.11e-16   (paged == dense; blocks are just storage)
 
 差是机器 epsilon。paging 改变 KV *住在哪*、以及 kernel *怎么够到它*——从不改变 attention *算什么*。这就是 PagedAttention 的全部许可证：近乎零的内存浪费与块共享，代价是一次 kernel 吸收掉的 gather。
 
+### 在 vLLM 源码里读它（v0.26.0）
+
+三个锚点把 §3 的地图变成可点的代码——外加一句关于 V1 引擎到底跑什么的诚实提醒：
+
+- **布局 + 写入路径（V1 活代码）。** [`vllm/v1/attention/ops/paged_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/ops/paged_attn.py) 短小而真实：`PagedAttention.split_kv_cache` 算 `x = 16 // kv_cache.element_size()` 并返回 `key_cache.view(num_blocks, num_kv_heads, head_size // x, -1, x)`（§3.1 那个 coalescing-aware 布局），而 `write_to_paged_cache` 调 `ops.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping.flatten(), ...)`——就是 §3.2 的按 `slot_mapping` 散写（`ops` 即 `vllm/_custom_ops.py` 的 `reshape_and_cache`）。
+- **kernel 设计（叙事）。** [`docs/design/paged_attention.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/paged_attention.md) 带着 kernel 签名（`q [num_seqs, num_heads, head_size]`、`k_cache [num_blocks, num_kv_heads, head_size/x, block_size, x]`、模板参数 `BLOCK_SIZE`、`PARTITION_SIZE`）与你在 §3.3 映射过的块循环伪代码。读它是为了看*设计*。
+- **提醒（实际跑什么）。** 在 v0.26.0，独立的旧 `paged_attention_v1/v2` CUDA kernel **已不是默认 decode 路径**——V1 引擎经其 backend（FlashAttention / FlashInfer）派发 attention，它们实现*同一套* paged-KV 契约。你真正会单步走的是 [`vllm/v1/attention/backends/flash_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/flash_attn.py) 里的 `FlashAttentionImpl.forward(...)`（[FlashAttention 那课](../part2/flash-attention.md) 打开它）：它拿 Q/K/V **外加 block tables**，交给那个 gather 分页 KV 的融合 kernel。设计文档的块循环仍是对那个 kernel 内部*最清楚的解释*。
+
+你不会重写其中任何一段（ADR-0002——读 + 调，不手写）。但你现在能打开 `paged_attn.py`、在十几行真实 Python 里确认 `x`-split 布局与 `slot_mapping` 写入，再把设计文档的伪代码读成 §4 `paged_attention()` 的带注释版本。
+
 ## 5 · Lab —— 读真实的 kernel
 
 !!! gpu "GPU Lab（可选验证）"
@@ -178,13 +192,15 @@ max abs diff = 1.11e-16   (paged == dense; blocks are just storage)
 ```text
 阅读清单 —— 跟着一个 query 走源码：
 1. 打开 docs/design/paged_attention.md —— 读 "Inputs" 与布局章节。
-2. 在 vllm/.../attention/ops/paged_attn.py 里找 split_kv_cache：
-     - 确认 x = 16 // element_size，与 [num_blocks, num_kv_heads, head_size//x, block_size, x] 视图。
-3. 在 csrc/attention/ 里找块循环：
+2. 在 vllm/v1/attention/ops/paged_attn.py 里找 split_kv_cache：
+     - 确认 x = 16 // element_size，与 (num_blocks, num_kv_heads, head_size//x, -1, x) 视图。
+3. 在 docs/design/paged_attention.md 的 kernel 伪代码里找块循环：
      - 定位 block_table 把逻辑 -> 物理块索引的地方，
      - 定位 online-softmax 的运行最大值 / 和 / 累加器，
      - 定位 PARTITION_SIZE 分支（v1 vs v2 切分）与 max_num_partitions 输出维。
-4. 把每处映到 §4 paged_attention() 的一行：block-table 走、逐块 gather、online-softmax 折。
+4. 在 vllm/v1/attention/backends/flash_attn.py 里找 FlashAttentionImpl.forward —— V1 的活
+     decode 路径；确认它拿 block tables、把分页 KV 交给融合 kernel。
+5. 把每处映到 §4 paged_attention() 的一行：block-table 走、逐块 gather、online-softmax 折。
 ```
 
 可选 GPU 验证：用 `Qwen2.5-7B-Instruct` 和一个小 `--max-model-len` 启动 vLLM，发几个请求，在日志/指标里看 KV 块用量——你会看到块随序列增长按需分配，而非一次性预留。（完整服务图景是 Part 5 的课；这里只是确认块池的行为像 §4 的 `k_pool`。）
@@ -197,6 +213,7 @@ max abs diff = 1.11e-16   (paged == dense; blocks are just storage)
 - **以为 block table 是连续或有序的。** 物理块被分配到任何有空的地方；block table（和 `slot_mapping`）是唯一把它们系到逻辑顺序的东西。那份自由正是要点——它干掉碎片、使能共享。
 - **读 kernel 时指望一次连续的 KV 读。** gather（块循环）是与稠密 KV attention kernel 的定义性区别；若你在找一次跨整条序列的 strided load，就会错过它的结构。
 - **在这里过度声称服务故事。** paging *如何*提吞吐（continuous batching、block manager、prefix caching）是系统话题——本课只讲读使它成为可能的那个 kernel。
+- **以为设计文档里的 kernel 就是今天在跑的。** 在 v0.26.0，独立的 `paged_attention_v1/v2` CUDA kernel **已不是默认 decode 路径**——V1 引擎经 FlashAttention/FlashInfer backend 派发，它们实现*同一套* paged-KV 契约（block tables、`slot_mapping`）。设计文档是对 gather + online-softmax 循环*最清楚的解释*；`FlashAttentionImpl.forward` 才是真正执行的。读文档取其思想，读 backend 取其代码——别在面试里把 `paged_attention_v1/v2` 当「当前实现」引用。
 
 ## 7 · 面试连线
 

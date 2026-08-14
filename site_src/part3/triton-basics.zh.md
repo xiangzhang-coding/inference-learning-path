@@ -13,7 +13,20 @@
 
 ## 2 · 心智模型
 
-Triton 的单位是 **program**（你 kernel 的一个实例，像一个 CUDA *block*），由 `tl.program_id` 标识。你启动一个 **grid** 的 program；每个处理输出的一个 tile。
+Triton 的单位是 **program**（你 kernel 的一个实例，像一个 CUDA *block*），由 `tl.program_id` 标识。你启动一个 **grid** 的 program；每个处理输出的一个 tile——一次 SPMD 分解（一张*拓扑*图，用一张 Mermaid，遵循 ADR-0005；图内标签保持英文）：
+
+```mermaid
+flowchart TB
+    L["kernel launch<br/>grid = cdiv(n, BLOCK) programs"] --> P0["program pid = 0<br/>owns block 0"]
+    L --> P1["program pid = 1<br/>owns block 1"]
+    L --> Pd["…"]
+    L --> Pg["program pid = G-1<br/>owns the ragged last block"]
+    P0 --> C["compiler lowers EACH program to warps:<br/>coalesces tl.load / tl.store,<br/>stages SRAM, picks num_warps"]
+    P1 --> C
+    Pg --> C
+```
+
+你保留前两课的逐线程心智模型——但你*写*的是 program 的视角。与 CUDA C++ 的对照，并排看（一段代码对比，用 ASCII，遵循 ADR-0005）：
 
 ```text
 CUDA C++  : 你写 ONE THREAD 的视角          Triton   : 你写 ONE PROGRAM 的视角（一个 block）
@@ -23,10 +36,6 @@ CUDA C++  : 你写 ONE THREAD 的视角          Triton   : 你写 ONE PROGRAM �
   // coalescing、bank 冲突                       x = tl.load(x_ptr+offs, mask=mask)         # 整块
                                                  tl.store(out_ptr+offs, x+y, mask=mask)
                                                  # 编译器选 warp、合并访存、中转 SRAM
-
-一个 GRID 的 program 铺在数据上：
-   data:  [ block 0 ][ block 1 ][ block 2 ] ... [ block G-1 ]
-   pid:       0          1          2      ...      G-1        G = triton.cdiv(n, BLOCK)
 ```
 
 三个要抓住的形状：
@@ -178,6 +187,16 @@ if __name__ == "__main__":
 
 **逐行讲解（kernel 3）：** 一个**二维 grid**——`pid_m, pid_n` 命名这个 program 计算的输出 tile。`offs_m[:, None]` / `offs_k[None, :]` 把一维偏移向量广播成二维的指针块（stride 处理任意布局）。K-loop load 一个 `BLOCK_M×BLOCK_K` 与一个 `BLOCK_K×BLOCK_N` 子 tile、`tl.dot` 进一个 **`float32` 累加器**（即便输入是 FP16 也做精度守卫），每步把指针推进 `BLOCK_K`。循环后转成 FP16、在 M/N 边界带 mask store 一次。`@triton.autotune` 编译列出的每个 `triton.Config`，为给定的 `(M, N, K)` 挑最快的——那个你本来要手做的 block 大小 / `num_warps` / `num_stages` 搜索。
 
+### 在 vLLM 源码里读它（v0.26.0）
+
+你刚写的 matmul，在结构上正是 vLLM 最热的 kernel 之一：[`vllm/model_executor/layers/fused_moe/fused_moe.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/fused_moe/fused_moe.py) 里融合的 Mixture-of-Experts GEMM。打开 `@triton.jit def fused_moe_kernel(...)`，§4 的每个构件都在：
+
+- `pid = tl.program_id(axis=0)`——同样的 program-id 启动，再解码成二维 `(pid_m, pid_n)` tile，并带一个 `GROUP_M` 重排以复用 L2。
+- 一个 K-loop 带 mask 地 `tl.load` A/B 子 tile 并累加 `accumulator = tl.dot(a, b, acc=accumulator)`——就是你 kernel-3 的循环，外加逐 expert 路由与可选反量化。
+- 它经 `invoke_fused_moe_kernel` 启动，后者用 `triton.cdiv(...)` 定 grid 大小、并选 `num_warps`（启发式 `num_warps = 4 if M <= 128 else 8` 原样出现）——正是 §3.4 描述的那个 tuning 旋钮。
+
+要看最朴素的例子，[`vllm/lora/ops/triton_ops/`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/ops/triton_ops) 放着 LoRA 的 shrink/expand Triton kernel，其 `README_TUNING.md` 列出了 `block_m/n/k`、`num_warps`、`num_stages` 的搜索空间——就是 §3.4 的 autotuner 扫描，写在明处。你不会把这些工程做得更好（ADR-0002——读 + 轻改），但你现在能从头到尾读 `fused_moe_kernel`，并认出它就是你那个 matmul 外加了路由。
+
 ## 5 · Lab —— 验证 + 窥一眼 tuning
 
 在 GPU 上跑上面三个 `__main__` 块：每个都打印出与其 PyTorch 参考近乎为零的误差——kernel 正确的证明。再观察 Triton 的编译与缓存行为以及 autotuner：
@@ -204,6 +223,7 @@ print("backend:", tgt.backend)                      # NVIDIA 上是 'cuda'，AMD
 - **指望赢过 cuBLAS。** 教学 matmul 跑不过厂商库；Triton 的价值在于融合库不提供的自定义算子（如 attention），而非重造 GEMM。
 - **`BLOCK_SIZE` 必须是 `constexpr`，且（softmax 那个）是大于等于行宽的 2 的幂。** 它是编译期形状；非 `constexpr` 的 block 大小编译不过，太小的 softmax block 会悄悄丢列。
 - **Triton 需要 GPU。** 没有生产级 CPU 后端——没有 CUDA/ROCm 的机器连编译都做不到。在任意机器上读，在 GPU 上跑 Lab。
+- **`num_stages` 是时延隐藏，不是魔法常数。** 除 block 大小与 `num_warps` 外，`@triton.autotune` 还扫 **`num_stages`**——软件流水线深度，让*下一*次迭代的 `tl.load` 与*当前*的 `tl.dot` 重叠，隐藏全局访存时延。stage 越多隐藏越多，但要花寄存器/shared memory，还可能*拉低* occupancy——与[执行模型](cuda-execution-model.md)那节 occupancy 一样的「够就好，不是越大越好」权衡。这就是为何 autotuner 去搜它（vLLM 的 `fused_moe` 配置把 `num_stages` 与 `num_warps` 并列），而非写死一个。
 
 ## 7 · 面试连线
 

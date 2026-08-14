@@ -13,7 +13,20 @@ Here's what makes Triton the right rung between "call PyTorch ops" and "hand-wri
 
 ## 2 · Mental model
 
-Triton's unit is the **program** (one instance of your kernel, like one CUDA *block*), identified by `tl.program_id`. You launch a **grid** of programs; each handles one tile of the output.
+Triton's unit is the **program** (one instance of your kernel, like one CUDA *block*), identified by `tl.program_id`. You launch a **grid** of programs; each handles one tile of the output — an SPMD decomposition (a topology, so one Mermaid graph, per ADR-0005):
+
+```mermaid
+flowchart TB
+    L["kernel launch<br/>grid = cdiv(n, BLOCK) programs"] --> P0["program pid = 0<br/>owns block 0"]
+    L --> P1["program pid = 1<br/>owns block 1"]
+    L --> Pd["…"]
+    L --> Pg["program pid = G-1<br/>owns the ragged last block"]
+    P0 --> C["compiler lowers EACH program to warps:<br/>coalesces tl.load / tl.store,<br/>stages SRAM, picks num_warps"]
+    P1 --> C
+    Pg --> C
+```
+
+You keep the per-thread mental models from the last two lessons — but you *write* from the program's view. The contrast with CUDA C++, side by side (a code comparison, so ASCII, per ADR-0005):
 
 ```text
 CUDA C++  : you write ONE THREAD's view      Triton   : you write ONE PROGRAM's view (a block)
@@ -23,10 +36,6 @@ CUDA C++  : you write ONE THREAD's view      Triton   : you write ONE PROGRAM's 
   // coalescing, bank conflicts by hand          x = tl.load(x_ptr+offs, mask=mask)         # whole block
                                                  tl.store(out_ptr+offs, x+y, mask=mask)
                                                  # compiler picks warps, coalesces, stages SRAM
-
-GRID of programs over the data:
-   data:  [ block 0 ][ block 1 ][ block 2 ] ... [ block G-1 ]
-   pid:       0          1          2      ...      G-1        G = triton.cdiv(n, BLOCK)
 ```
 
 Three shapes to hold:
@@ -178,6 +187,16 @@ if __name__ == "__main__":
 
 **Line-by-line (kernel 3):** a **2-D grid** — `pid_m, pid_n` name the output tile this program computes. `offs_m[:, None]` / `offs_k[None, :]` broadcast 1-D offset vectors into a 2-D block of pointers (strides handle any layout). The K-loop loads a `BLOCK_M×BLOCK_K` and a `BLOCK_K×BLOCK_N` sub-tile and `tl.dot`s them into a **`float32` accumulator** (precision guard even though inputs are FP16), advancing the pointers by `BLOCK_K` each step. After the loop it casts to FP16 and stores once, masked at the M/N edges. `@triton.autotune` compiles each listed `triton.Config` and picks the fastest for the given `(M, N, K)` — the block-size/`num_warps`/`num_stages` search you'd otherwise do by hand.
 
+### Reading it in vLLM's source (v0.26.0)
+
+The matmul you just wrote is, structurally, one of vLLM's hottest kernels: the fused Mixture-of-Experts GEMM in [`vllm/model_executor/layers/fused_moe/fused_moe.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/fused_moe/fused_moe.py). Open `@triton.jit def fused_moe_kernel(...)` and every construct from §4 is there:
+
+- `pid = tl.program_id(axis=0)` — the same program-id launch, then decoded into a 2-D `(pid_m, pid_n)` tile with a `GROUP_M` re-ordering for L2 reuse.
+- A K-loop that `tl.load`s A/B sub-tiles with masks and accumulates `accumulator = tl.dot(a, b, acc=accumulator)` — your kernel-3 loop, plus per-expert routing and optional dequant.
+- It's launched via `invoke_fused_moe_kernel`, which sizes the grid with `triton.cdiv(...)` and chooses `num_warps` (the heuristic `num_warps = 4 if M <= 128 else 8` appears verbatim) — the exact tuning knob §3.4 describes.
+
+For the plainest possible example, [`vllm/lora/ops/triton_ops/`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/ops/triton_ops) holds the LoRA shrink/expand Triton kernels, and its `README_TUNING.md` lists the `block_m/n/k`, `num_warps`, `num_stages` search space — the autotuner sweep from §3.4, spelled out. You won't out-engineer these (ADR-0002 — read + lightly edit), but you can now read `fused_moe_kernel` top to bottom and recognize it as your matmul with routing bolted on.
+
 ## 5 · Lab — verify + peek at the tuning
 
 Run all three `__main__` blocks above on a GPU: each prints a near-zero error against its PyTorch reference — proof the kernels are correct. Then observe Triton's compile-and-cache behavior and the autotuner:
@@ -204,6 +223,7 @@ print("backend:", tgt.backend)                      # 'cuda' on NVIDIA, 'hip' on
 - **Expecting to beat cuBLAS.** A teaching matmul won't out-run vendor libraries; Triton's value is fusing custom ops (like attention) that no library provides, not re-implementing GEMM.
 - **`BLOCK_SIZE` must be `constexpr` and (for the softmax) a power of two ≥ the row.** It's a compile-time shape; a non-`constexpr` block size won't compile, and a too-small softmax block silently drops columns.
 - **Triton needs a GPU.** There's no production CPU backend — a machine without CUDA/ROCm can't even compile these. Do the reading on any box; run the labs on the GPU.
+- **`num_stages` is latency hiding, not a magic constant.** Beyond block size and `num_warps`, `@triton.autotune` also sweeps **`num_stages`** — the software-pipelining depth that overlaps the *next* iteration's `tl.load` with the *current* `tl.dot`, hiding global-memory latency. More stages hide more latency but cost registers/shared memory and can *lower* occupancy — the same "enough, not maximum" tradeoff as the [execution model](cuda-execution-model.md)'s occupancy. That's why the autotuner searches it (vLLM's `fused_moe` configs list `num_stages` alongside `num_warps`) rather than hard-coding one.
 
 ## 7 · Interview links
 

@@ -128,6 +128,15 @@ Shared-memory bank conflicts — worst-case lanes on one bank (ideal = 1):
 
 Both effects are pure addressing: nothing about the *values* changed, only which bytes the 32 lanes asked for. The stride-1 → stride-32 collapse (100% → 12.5% HBM efficiency; 1-way → 32-way bank serialization) and the stride-33 recovery are the whole reason kernels obsess over layout.
 
+### Reading it in vLLM's source (v0.26.0)
+
+vLLM bakes both levers of this lesson into its KV-cache write path. Two anchors:
+
+- **The layout** — [`vllm/v1/attention/ops/paged_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/ops/paged_attn.py), `PagedAttention.split_kv_cache`, computes `x = 16 // kv_cache.element_size()` and views the key cache as `[num_blocks, num_kv_heads, head_size // x, -1, x]`. That trailing `x` (= 8 for FP16) groups `head_size` into **16-byte chunks** — the alignment §6 warns about, chosen so each thread's load is a single aligned transaction. It's coalescing designed into the *data structure*, not just the access.
+- **The kernel** — the write itself is `reshape_and_cache_kernel` in [`csrc/libtorch_stable/cache_kernels.cu`](https://github.com/vllm-project/vllm/blob/v0.26.0/csrc/libtorch_stable/cache_kernels.cu) (dispatched by the host `reshape_and_cache`, which `vllm/_custom_ops.py` exposes as `ops.reshape_and_cache`). It sets `constexpr int VEC_SIZE = (sizeof(scalar_t) == 2) ? 8 : 4;` — **8 FP16 elements = 16 bytes per vector store** — and moves the data through `vectorize_with_alignment<VEC_SIZE>(...)`. The flash variant `reshape_and_cache_flash_kernel` strides by warp lane (`vectorize_with_alignment<VEC_SIZE>(k_src_h, k_dst_h, head_size, lane, 32, ...)`): consecutive lanes write consecutive elements — the coalesced pattern of §3.1, in a production kernel.
+
+You won't rewrite these (ADR-0002 — read + tune, don't hand-author), but you can now read `VEC_SIZE`, the `x` split, and the `lane, 32` stride and name them: *vectorized 16-byte aligned stores, laid out and indexed so the warp coalesces.*
+
 ## 5 · Lab — coalesced vs strided bandwidth, on real HBM
 
 !!! gpu "GPU Lab"
@@ -180,6 +189,7 @@ print("(same 256 MiB of data; only the access pattern differs)")
 - **Broadcast is not a conflict.** All 32 lanes reading the *same* shared word is free (hardware broadcasts). Conflicts are lanes hitting *different* words in the *same* bank — don't confuse the two.
 - **Coalescing ≠ L2 caching.** Coalescing is about *one warp's* 32 addresses per instruction folding into few transactions. A strided kernel might still get L2 hits over time, but it has already paid the per-warp transaction tax — different mechanism, different fix.
 - **`.contiguous()` copies.** Calling it fixes the access pattern for downstream kernels but costs a full pass over the data; don't sprinkle it blindly — know whether the reuse pays for the copy.
+- **Coalescing isn't the only bandwidth lever — vector width is too.** On top of being coalesced, a warp can move more bytes per instruction with **128-bit (16-byte) vectorized loads/stores** (`float4`, `__ldg`) than with 32-bit scalar ones — fewer instructions issued for the same traffic. It's exactly what `reshape_and_cache` does (`VEC_SIZE = 8` FP16 elements = 16 bytes per store, via `vectorize_with_alignment`). Coalesced *and* wide beats coalesced *and* narrow — which is also why alignment (§6 above) matters: a 16-byte vector op needs a 16-byte-aligned address.
 
 ## 7 · Interview links
 

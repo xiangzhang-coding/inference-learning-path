@@ -13,18 +13,28 @@ Here is the one idea that makes everything else fall into place: **a GPU does no
 
 ## 2 · Mental model
 
-The launch hierarchy, and what maps to what in hardware:
+The launch hierarchy, and what maps to what in hardware (a *topology*, so one clean Mermaid graph, per ADR-0005):
+
+```mermaid
+flowchart LR
+    subgraph SW["SOFTWARE — what you launch"]
+        direction TB
+        G["grid"] -->|"many"| B["block<br/>(≤ 1024 threads)"]
+        B -->|"chopped into"| W["warp = 32 threads<br/>the real unit of execution"]
+    end
+    subgraph HW["HARDWARE — what it runs on"]
+        direction TB
+        GPU["GPU"] -->|"many"| SM["SM<br/>streaming multiprocessor"]
+        SM --> WS["warp scheduler<br/>issues 1 instruction / 32 lanes (SIMT)"]
+    end
+    G -.->|"grid sprayed across all SMs"| GPU
+    B -.->|"one block → ONE SM, never split"| SM
+    W -.->|"a warp is issued by"| WS
+```
+
+Latency hiding is the *point* of that hierarchy — a numeric picture the graph deliberately leaves out:
 
 ```text
-SOFTWARE you launch                       HARDWARE it runs on
-──────────────────────                    ─────────────────────
-grid  ── many ──►  block                   GPU ── many ──► SM (streaming multiprocessor)
-                     │                                        │
-block ── ≤1024 ──► thread                  block is assigned to ONE SM (never split)
-                     │                                        │
-32 threads  ═══►  1 WARP  ◄══ the real unit of execution ══►  warp scheduler
-                                            issues ONE instruction for all 32 lanes (SIMT)
-
 LATENCY HIDING (the point of it all)
   SM holds up to 48 warps resident (cc 8.9).  Warp A issues a load ─► stalls ~400 cyc
      │                                          scheduler instantly runs warp B, C, D…
@@ -133,6 +143,15 @@ warps                         : 8
 
 Both layouts send half the threads down each path — identical arithmetic. The interleaved one costs **2×** purely because the branch splits every warp. That is the entire lesson of SIMT divergence: keep control flow uniform *within* a warp.
 
+### Reading it in vLLM's source (v0.26.0)
+
+The abstract launch hierarchy of §2 is a concrete launch config in every vLLM CUDA kernel. The simplest to read is the fused SiLU-and-multiply activation, [`csrc/libtorch_stable/activation_kernels.cu`](https://github.com/vllm-project/vllm/blob/v0.26.0/csrc/libtorch_stable/activation_kernels.cu):
+
+- The host launcher `silu_and_mul` uses the macro `LAUNCH_ACTIVATION_GATE_KERNEL`, whose grid/block are exactly the §3.1 hierarchy: **`dim3 grid(num_tokens)`** — one block per token, sprayed across the SMs — and **`dim3 block(std::min(d, 1024))`** — threads per block, hard-capped at the 1024 the guide gives (the vectorized path uses `std::min(d / vec_size, 1024)`).
+- Inside `__global__ void act_and_mul_kernel`, the block indexes its token with **`blockIdx.x`** (`input + blockIdx.x * 2 * d`) — the "one block lives on one SM" rule made literal — and each thread strides its slice with **`for (int i = threadIdx.x; i < d; i += blockDim.x)`**. Consecutive `threadIdx.x` touch consecutive elements, so the warp's 32 lanes are [coalesced](memory-access.md) — the launch config and the access pattern are the two levers this Part is about, in six lines.
+
+You won't write this kernel (ADR-0002 — read + tune, don't hand-author), but you can now open it and read the grid/block dims as *the SM-mapping decision they encode*: how many blocks the scheduler sprays, and how many warps (`block/32`) each SM tries to keep resident.
+
 ## 5 · Lab — see the machine, and watch latency hiding kick in
 
 !!! gpu "GPU Lab"
@@ -189,6 +208,7 @@ for elems in (2**12, 2**16, 2**20, 2**24, 2**26):      # 4K … 67M float32
 - **Thinking one thread should do a lot.** The GPU wants *many tiny* threads so the scheduler always has a ready warp. A few heavy threads starve the latency-hiding machine.
 - **`__syncthreads()` is block-wide, not grid-wide.** It's a barrier for the threads *in one block*; there is no cheap global barrier across the grid within a kernel. Cross-block coordination means a new kernel launch (the overhead the [CUDA graphs](../part2/kernel-fusion-cuda-graphs.md) lesson attacks).
 - **Warp size is not universal.** It's 32 on every NVIDIA GPU to date, but AMD wavefronts are 64. Don't bake 32 into portable reasoning about non-NVIDIA hardware.
+- **The tail effect (wave quantization).** A grid runs in *waves* of blocks across the SMs; if the block count isn't a multiple of (SMs × blocks-per-SM), the **final wave leaves SMs idle** — a kernel at 100% occupancy can still waste a whole wave's worth of the machine. It bites hardest when there are *few* waves (a small grid, like the `dim3 grid(num_tokens)` decode launch of the read-along with a tiny batch); with thousands of blocks one partial wave is noise. It's occupancy's blind spot — distinct from resident-warp occupancy, and yet another reason batch 1 underfills the GPU.
 
 ## 7 · Interview links
 
