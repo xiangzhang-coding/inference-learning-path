@@ -15,22 +15,24 @@ LLM 逐个 token 生成文本。要产出第 *t* 个 token，注意力需要**�
 
 ## 2 · 心智模型
 
-把解码想成在一本不断变长的笔记本上读写：
+要记住的一张图：你那 24 GB 显存被劈成两块——**权重**（一次性付清）与 **KV 缓存**（按 token、按并发序列付费）——而先耗尽的总是 KV 那块：
 
 ```text
-step 1:  [tok1]                      -> 写入 tok1 的 K,V             -> 产出 tok2
-step 2:  [tok1 tok2]                 -> 复用 K,V(tok1); 写 K,V(tok2) -> 产出 tok3
-step 3:  [tok1 tok2 tok3]            -> 复用 K,V(1,2);  写 K,V(tok3) -> 产出 tok4
-...
-           \_________________/
-            KV 缓存：每步增加一个 token 的 K,V，
-            序列结束前从不缩小
+24 GB VRAM, split two ways   (BF16 weights; illustrative)
+
+  |<------------------------------ 24 GB total ------------------------------>|
+  +----------------------+------+------+------+------+------+ ~ +------+-------+
+  |     weights ~14 GB   | KV#1 | KV#2 | KV#3 | KV#4 | KV#5 | ~ | KV#N | free  |
+  +----------------------+------+------+------+------+------+ ~ +------+-------+
+   paid ONCE, fixed        \_____ KV cache: ~0.44 GiB per 8k-token sequence _____/
+                            each grows +1 token / step;
+                            N ~= 10 GB / 0.44 ~= 22 sequences  =  concurrency ceiling
 ```
 
 两个结论立刻浮现：
 
 - **Decode 是 memory-bound（带宽受限）。** 每步都从 HBM 重新读取**整个** KV 缓存，却只做一个新 token 的少量计算。瓶颈在带宽，不在 FLOPs。→ 见[术语表](../glossary.md)的 *Memory-bound* 与 *Roofline*。
-- **并发是一个显存预算问题。** 权重是一次性付清的固定成本；KV 缓存是随 `batch × sequence_length` 增长的按序列成本。服务吞吐很大程度上就是「能塞下多少 KV 缓存」。
+- **并发是一个显存预算问题。** 权重是一次性付清的固定成本；KV 缓存是随 `batch × sequence_length` 增长的按序列成本。服务吞吐很大程度上就是「能塞下多少 KV 缓存」——权重*没*占走的每一字节，都是上图中 KV 区域多出的一格。
 
 ## 3 · 原理与数学
 

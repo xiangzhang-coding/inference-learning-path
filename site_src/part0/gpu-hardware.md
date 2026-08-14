@@ -15,20 +15,34 @@ So the single most useful thing you can carry into every later chapter is a **ha
 
 Hold two pictures in your head: the **memory pyramid** (where bytes live and how fast they move) and the **execution fabric** (who does the math).
 
-```text
-                    THE MEMORY PYRAMID  (per RTX 4090, illustrative)
-                    ┌───────────────────────────────┐
-   fastest, tiniest │  Registers      ~KB/SM    ~10s of TB/s │  on-chip
-        ▲           ├───────────────────────────────┤
-        │           │  SRAM: L1 / shared mem  ~100 KB/SM  ~TB/s │  on-chip  <- FlashAttention lives here
-        │           ├───────────────────────────────┤
-        │           │  L2 cache       ~72 MB    ~few TB/s     │  on-chip
-        │           ├───────────────────────────────┤
-   slowest, biggest │  HBM/GDDR6X     24 GB     ~1 TB/s       │  OFF-chip <- weights + KV cache live here
-                    └───────────────────────────────┘
-                     Every decode step pulls weights + KV across this last, slow line.
+<svg viewBox="0 0 880 330" role="img" xmlns="http://www.w3.org/2000/svg" aria-label="GPU memory hierarchy pyramid: registers, SRAM, L2, and HBM — faster and smaller at the top, slower and larger at the bottom. FlashAttention keeps data in SRAM; weights and KV cache live in HBM." style="max-width:100%;height:auto;font-family:inherit">
+  <title>The memory pyramid (RTX 4090, illustrative)</title>
+  <polygon points="360,24 440,24 470,88 330,88"    fill="currentColor" fill-opacity="0.06" stroke="currentColor"/>
+  <polygon points="330,88 470,88 500,152 300,152"   fill="currentColor" fill-opacity="0.10" stroke="currentColor"/>
+  <polygon points="300,152 500,152 530,216 270,216" fill="currentColor" fill-opacity="0.14" stroke="currentColor"/>
+  <polygon points="270,216 530,216 560,290 240,290" fill="currentColor" fill-opacity="0.18" stroke="currentColor"/>
+  <g text-anchor="middle" fill="currentColor" font-size="13">
+    <text x="400" y="60">Registers · ~KB/SM · ~10s TB/s</text>
+    <text x="400" y="124">SRAM: L1 / shared · ~100 KB/SM · ~TB/s</text>
+    <text x="400" y="188">L2 cache · ~72 MB · few TB/s</text>
+    <text x="400" y="257">HBM / GDDR6X · 24 GB · ~1 TB/s</text>
+  </g>
+  <g fill="currentColor" font-size="12" opacity="0.75">
+    <text x="16" y="40">fast · tiny</text>
+    <text x="16" y="56">on-chip</text>
+    <text x="16" y="278">slow · huge</text>
+    <text x="16" y="294">off-chip</text>
+  </g>
+  <g fill="currentColor" font-size="12">
+    <text x="590" y="124">SRAM ← FlashAttention keeps data here</text>
+    <text x="590" y="257">HBM  ← weights + KV cache live here</text>
+  </g>
+</svg>
 
-                    THE EXECUTION FABRIC
+Each step *down* the pyramid is roughly an **order of magnitude** slower but larger — and every decode step pulls weights + KV across that bottom, slow HBM line. Now the fabric that does the math on those bytes:
+
+```text
+THE EXECUTION FABRIC
    GPU = 128 SMs (Streaming Multiprocessors), each runs many WARPS (32 threads, lockstep).
    An SM hides memory latency by SWAPPING warps: while warp A waits on HBM, warp B computes.
    OCCUPANCY = how many warps are resident to swap between. High occupancy hides latency;

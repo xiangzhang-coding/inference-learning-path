@@ -18,26 +18,45 @@
 
 ## 2 · 心智模型
 
-一个请求，画成时间线——每个度量都是它的一段：
+一个请求，画成 client 与 server 之间的一段对话——每个度量都是两个事件之间的间隔：
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as vLLM server
+    C->>S: request (prompt of S tokens)
+    Note over S: Prefill — one compute-bound pass
+    S-->>C: token #1
+    Note right of C: TTFT = t_first − t_arrival
+    Note over S: Decode — memory-bound loop
+    S-->>C: token #2
+    S-->>C: token #3
+    S-->>C: token #N
+    Note right of C: ITL = gap between tokens
+    Note over C,S: TPOT = mean ITL
+    Note over C,S: e2e = TTFT + (N−1)·TPOT
+```
+
+同一个请求画成**时间线**，每个度量就成了一段可测的区间：
 
 ```text
-单个请求（流式）
+SINGLE REQUEST (streaming)
   t_arrival        t_first                                   t_last
      |                |        |       |       |       |        |
      |<---- TTFT ---->| tok#1  tok#2   tok#3   tok#4   tok#5    |
      |                |<-ITL->|<-ITL->|<-ITL->|<-ITL->|         |
      |                                                          |
-     |<---------------------- e2e 延迟 ------------------------>|
+     |<---------------------- e2e latency --------------------->|
 
-  TTFT = t_first - t_arrival                  （由 PREFILL 主导）
-  ITL  = 相邻两 token 的间隔                   （每个 decode 步）
-  TPOT = 平均 ITL = (t_last - t_first)/(N-1)   （由 DECODE 主导）
+  TTFT = t_first - t_arrival                 (dominated by PREFILL)
+  ITL  = gap between consecutive tokens       (each decode step)
+  TPOT = mean ITL = (t_last - t_first)/(N-1)  (dominated by DECODE)
   e2e  = TTFT + (N-1)*TPOT
 
-多个请求（系统视角）
-  throughput = （全部输出 token）/ 墙钟             <- 裸 token/s
-  goodput    = （满足 SLO 的 token/请求）/ 墙钟      <- 诚实的 token/s
-                     例如 SLO = "TTFT <= 0.5s 且 TPOT <= 50ms"
+MANY REQUESTS (the system view)
+  throughput = (all output tokens) / wall-clock          <- raw tokens/s
+  goodput    = (tokens/reqs that MET the SLO) / wall-clock <- honest tokens/s
+                     e.g. SLO = "TTFT <= 0.5s AND TPOT <= 50ms"
 ```
 
 要握住两个形状：

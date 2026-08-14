@@ -15,24 +15,38 @@
 
 脑中同时握住两张图：**内存金字塔**（字节住哪、搬多快）与**执行结构**（谁来算）。
 
-```text
-                    内存金字塔（以 RTX 4090 为例，示例数据）
-                    ┌───────────────────────────────┐
-   最快、最小        │  寄存器          ~KB/SM    ~数十 TB/s │  片上
-        ▲           ├───────────────────────────────┤
-        │           │  SRAM: L1 / 共享内存  ~100 KB/SM ~TB/s │  片上  <- FlashAttention 住这
-        │           ├───────────────────────────────┤
-        │           │  L2 缓存         ~72 MB    ~数 TB/s     │  片上
-        │           ├───────────────────────────────┤
-   最慢、最大        │  HBM/GDDR6X      24 GB     ~1 TB/s      │  片外  <- 权重 + KV 缓存住这
-                    └───────────────────────────────┘
-                     每个 decode 步都要把权重 + KV 拖过这条又慢又长的最底线。
+<svg viewBox="0 0 880 330" role="img" xmlns="http://www.w3.org/2000/svg" aria-label="GPU memory hierarchy pyramid: registers, SRAM, L2, and HBM — faster and smaller at the top, slower and larger at the bottom. FlashAttention keeps data in SRAM; weights and KV cache live in HBM." style="max-width:100%;height:auto;font-family:inherit">
+  <title>The memory pyramid (RTX 4090, illustrative)</title>
+  <polygon points="360,24 440,24 470,88 330,88"    fill="currentColor" fill-opacity="0.06" stroke="currentColor"/>
+  <polygon points="330,88 470,88 500,152 300,152"   fill="currentColor" fill-opacity="0.10" stroke="currentColor"/>
+  <polygon points="300,152 500,152 530,216 270,216" fill="currentColor" fill-opacity="0.14" stroke="currentColor"/>
+  <polygon points="270,216 530,216 560,290 240,290" fill="currentColor" fill-opacity="0.18" stroke="currentColor"/>
+  <g text-anchor="middle" fill="currentColor" font-size="13">
+    <text x="400" y="60">Registers · ~KB/SM · ~10s TB/s</text>
+    <text x="400" y="124">SRAM: L1 / shared · ~100 KB/SM · ~TB/s</text>
+    <text x="400" y="188">L2 cache · ~72 MB · few TB/s</text>
+    <text x="400" y="257">HBM / GDDR6X · 24 GB · ~1 TB/s</text>
+  </g>
+  <g fill="currentColor" font-size="12" opacity="0.75">
+    <text x="16" y="40">fast · tiny</text>
+    <text x="16" y="56">on-chip</text>
+    <text x="16" y="278">slow · huge</text>
+    <text x="16" y="294">off-chip</text>
+  </g>
+  <g fill="currentColor" font-size="12">
+    <text x="590" y="124">SRAM ← FlashAttention keeps data here</text>
+    <text x="590" y="257">HBM  ← weights + KV cache live here</text>
+  </g>
+</svg>
 
-                    执行结构
-   GPU = 128 个 SM（流多处理器），每个 SM 跑很多 WARP（32 线程，锁步执行）。
-   SM 靠 SWAP warp 隐藏内存延迟：warp A 等 HBM 时，warp B 在算。
-   OCCUPANCY（占用率）= 有多少 warp 常驻可供切换。高占用率隐藏延迟；
-   但它 *不* 抬高带宽天花板。
+金字塔每往*下*一层，大约慢*一个数量级*、也更大——而每个 decode 步都要把权重 + KV 拖过底部那条又慢又长的 HBM 线。接着是对这些字节做算术的执行结构：
+
+```text
+THE EXECUTION FABRIC
+   GPU = 128 SMs (Streaming Multiprocessors), each runs many WARPS (32 threads, lockstep).
+   An SM hides memory latency by SWAPPING warps: while warp A waits on HBM, warp B computes.
+   OCCUPANCY = how many warps are resident to swap between. High occupancy hides latency;
+   it does NOT raise the bandwidth ceiling.
 ```
 
 要刻进脑子的两个形状：

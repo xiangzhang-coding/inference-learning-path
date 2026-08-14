@@ -17,7 +17,22 @@ Once you can map each structural choice — how many KV heads, how wide the FFN,
 
 ## 2 · Mental model
 
-One decoder layer, each box tagged with its dominant cost:
+First, the **shape** of one pre-norm decoder layer — the residual stream, and where the KV cache gets written:
+
+```mermaid
+flowchart TD
+    X[/"hidden state x"/] --> N1["RMSNorm"]
+    N1 --> ATT["Self-attention<br/>Q, K, V, O projections<br/>writes K,V to the cache"]
+    X --> A1(("+"))
+    ATT --> A1
+    A1 --> N2["RMSNorm"]
+    N2 --> FFN["SwiGLU FFN<br/>gate · up · down<br/>~75% of params & FLOPs"]
+    A1 --> A2(("+"))
+    FFN --> A2
+    A2 --> OUT[/"to next layer"/]
+```
+
+**How to read it.** Two residual adds (`+`) bracket the two sublayers: **attention** — the only place **K and V get written to the cache** — and the **SwiGLU FFN**, where the bulk of the parameters and FLOPs live. RMSNorm sits *before* each sublayer (pre-norm). Now tag each box with its dominant cost — the same layer read as a **bill of materials**:
 
 ```text
                        WEIGHTS   PREFILL FLOPs   KV CACHE

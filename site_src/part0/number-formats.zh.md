@@ -16,18 +16,18 @@ LLM 里的每个权重、激活、KV 缓存项，归根结底都是一小撮**�
 一个浮点数是 **符号 · 尾数 · 2^指数**——指数买*范围*，尾数买*精度*。一个整数格式是 **一个共享 scale · 一个小整数**——所有范围都住在 scale 里，所有值共享它。
 
 ```text
-浮点（每个值自带指数：范围与精度都烘进每个数里）
-  位布局                S = 符号,  E = 指数（范围）,  M = 尾数（精度）
-  FP32   S EEEEEEEE MMMMMMMMMMMMMMMMMMMMMMM   1+8+23   范围 ~1e38   参考基准
-  FP16   S EEEEE MMMMMMMMMM                   1+5+10   范围 ~6e4    精确，范围小 -> 溢出风险
-  BF16   S EEEEEEEE MMMMMMM                   1+8+7    范围 ~1e38   FP32 的范围，精度粗
-  FP8e4m3  S EEEE MMM                         1+4+3    范围 ~448    FP8 用于权重/激活
-  FP8e5m2  S EEEEE MM                         1+5+2    范围 ~6e4    FP8 范围更大，精度更低
+FLOATS  (per-value exponent: range and precision both baked into each number)
+  bit layout            S = sign,  E = exponent (range),  M = mantissa (precision)
+  FP32   S EEEEEEEE MMMMMMMMMMMMMMMMMMMMMMM   1+8+23   range ~1e38   the reference
+  FP16   S EEEEE MMMMMMMMMM                   1+5+10   range ~6e4    precise, SMALL range -> overflow risk
+  BF16   S EEEEEEEE MMMMMMM                   1+8+7    range ~1e38   FP32's range, COARSE precision
+  FP8e4m3  S EEEE MMM                         1+4+3    range ~448    FP8 for weights/activations
+  FP8e5m2  S EEEEE MM                         1+5+2    range ~6e4    FP8 with more range, less precision
 
-整数（一个共享 scale s 覆盖整个 tensor/channel/group）
-  INT8    [ -128 .. 127 ]   真实值  r ≈ s·(q - z)      8 比特/数
-  INT4    [   -8 ..   7 ]   真实值  r ≈ s·(q - z)      4 比特/数  <- 权重量化
-                             q = 存储的整数, s = scale, z = zero-point
+INTEGERS  (one shared scale s for a whole tensor/channel/group)
+  INT8    [ -128 .. 127 ]   real value  r ≈ s·(q - z)      8 bits/number
+  INT4    [   -8 ..   7 ]   real value  r ≈ s·(q - z)      4 bits/number  <- weight-only quant
+                             q = stored integer, s = scale, z = zero-point
 ```
 
 要握住两个形状：

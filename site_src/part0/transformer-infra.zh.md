@@ -17,21 +17,36 @@
 
 ## 2 · 心智模型
 
-一个 decoder 层，每个方框标注它的主导成本：
+先看一个 pre-norm decoder 层的**形状**——残差流，以及 KV 缓存在哪里被写入：
+
+```mermaid
+flowchart TD
+    X[/"hidden state x"/] --> N1["RMSNorm"]
+    N1 --> ATT["Self-attention<br/>Q, K, V, O projections<br/>writes K,V to the cache"]
+    X --> A1(("+"))
+    ATT --> A1
+    A1 --> N2["RMSNorm"]
+    N2 --> FFN["SwiGLU FFN<br/>gate · up · down<br/>~75% of params & FLOPs"]
+    A1 --> A2(("+"))
+    FFN --> A2
+    A2 --> OUT[/"to next layer"/]
+```
+
+**怎么读这张图。** 两个残差加法（`+`）夹住两个子层：**注意力**——唯一**把 K、V 写入缓存**的地方——与 **SwiGLU FFN**，参数与 FLOPs 的大头住在这里。RMSNorm 位于每个子层*之前*（pre-norm）。现在给每个方框标上主导成本——把同一层读作一张**物料清单（bill of materials）**：
 
 ```text
-                       权重      PREFILL FLOPs   KV 缓存
-  x ─► RMSNorm         极小      极小            —
+                       WEIGHTS   PREFILL FLOPs   KV CACHE
+  x ─► RMSNorm         tiny      tiny            —
        │
-       ├─► Q proj      中        中              —          }
-       ├─► K proj      小        小              写入 K      } 注意力：
-       ├─► V proj      小        小              写入 V      }  KV 在这里增长！
-       │   (RoPE 作用于 Q,K：无权重、极廉价)                 }
-       ├─► 注意力 score·softmax··V   —   prefill 时 O(S²)   读取全部 K,V
-       └─► O proj      中        中              —          }
+       ├─► Q proj      medium    medium          —          }
+       ├─► K proj      small     small           writes K    } attention:
+       ├─► V proj      small     small           writes V    }  KV grows here!
+       │   (RoPE on Q,K: no weights, cheap)                  }
+       ├─► attention score·softmax··V   —   O(S²) at prefill  reads all K,V
+       └─► O proj      medium    medium          —          }
        │
-  x ─► RMSNorm         极小      极小            —
-       └─► FFN (SwiGLU：gate, up, down)  大     大           —   <-- 参数与 FLOPs 大头
+  x ─► RMSNorm         tiny      tiny            —
+       └─► FFN (SwiGLU: gate, up, down)  BIG    BIG          —   <-- most params & FLOPs
 ```
 
 要分清的两个预算：

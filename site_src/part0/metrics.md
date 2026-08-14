@@ -18,7 +18,26 @@ The trap is optimizing one and silently wrecking another. Cram more requests int
 
 ## 2 · Mental model
 
-One request, as a timeline — every metric is a segment of it:
+One request, as a conversation between client and server — each metric is the gap between two events:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as vLLM server
+    C->>S: request (prompt of S tokens)
+    Note over S: Prefill — one compute-bound pass
+    S-->>C: token #1
+    Note right of C: TTFT = t_first − t_arrival
+    Note over S: Decode — memory-bound loop
+    S-->>C: token #2
+    S-->>C: token #3
+    S-->>C: token #N
+    Note right of C: ITL = gap between tokens
+    Note over C,S: TPOT = mean ITL
+    Note over C,S: e2e = TTFT + (N−1)·TPOT
+```
+
+The same request as a **timeline**, so each metric becomes a measured segment:
 
 ```text
 SINGLE REQUEST (streaming)

@@ -15,22 +15,24 @@ Here's the catch, and why this is *the* lesson to internalize first: **the cache
 
 ## 2 · Mental model
 
-Think of decoding as reading from a growing notebook:
+The one picture to hold: your 24 GB of VRAM is split between **weights** (paid once) and **KV cache** (paid per token, per concurrent sequence) — and it's the KV part that runs out first:
 
 ```text
-step 1:  [tok1]                      -> write K,V for tok1              -> emit tok2
-step 2:  [tok1 tok2]                 -> reuse K,V(tok1); write K,V(tok2) -> emit tok3
-step 3:  [tok1 tok2 tok3]            -> reuse K,V(1,2);  write K,V(tok3) -> emit tok4
-...
-           \_________________/
-            the KV cache: grows by one token's K,V every step,
-            never shrinks until the sequence finishes
+24 GB VRAM, split two ways   (BF16 weights; illustrative)
+
+  |<------------------------------ 24 GB total ------------------------------>|
+  +----------------------+------+------+------+------+------+ ~ +------+-------+
+  |     weights ~14 GB   | KV#1 | KV#2 | KV#3 | KV#4 | KV#5 | ~ | KV#N | free  |
+  +----------------------+------+------+------+------+------+ ~ +------+-------+
+   paid ONCE, fixed        \_____ KV cache: ~0.44 GiB per 8k-token sequence _____/
+                            each grows +1 token / step;
+                            N ~= 10 GB / 0.44 ~= 22 sequences  =  concurrency ceiling
 ```
 
 Two consequences fall out immediately:
 
 - **Decode is memory-bound.** Each step re-reads the *entire* KV cache from HBM but does a tiny amount of compute (one new token). The bottleneck is bandwidth, not FLOPs. → see the [Glossary](../glossary.md) entries for *Memory-bound* and *Roofline*.
-- **Concurrency is a memory-budgeting problem.** Weights are a fixed cost paid once; KV cache is a per-sequence cost that scales with `batch × sequence_length`. Serving throughput is largely "how much KV cache fits."
+- **Concurrency is a memory-budgeting problem.** Weights are a fixed cost paid once; KV cache is a per-sequence cost that scales with `batch × sequence_length`. Serving throughput is largely "how much KV cache fits" — every free byte the weights *don't* take is another slice of that KV region above.
 
 ## 3 · Principle & math
 
