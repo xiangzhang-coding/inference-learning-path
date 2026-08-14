@@ -15,7 +15,7 @@
 
 ## 2 · 心智模型
 
-每步的 token 预算，以及 prefill 去哪：
+每步的 token 预算，以及 prefill 去哪（每步的 token 时间线是时序图，按 ADR-0005 用 ASCII）：
 
 ```text
 一个调度器 STEP = 一份 `max_num_batched_tokens` token 的预算可花。
@@ -31,14 +31,17 @@
   step k+1 : [ decode×D | prefill chunk (budget−D) ]   进行中的 decode：✓ 前进
   step k+2 : [ decode×D | prefill chunk (最后一块)  ]   进行中的 decode：✓ 前进
              └ decode 从不停摆；prefill 稍晚完成（TTFT 权衡） ┘
+```
 
-PD 分离 —— 把两个阶段拆到不同硬件（多卡）：
-  ┌─ PREFILL 池 ──┐   KV cache    ┌─ DECODE 池 ───┐
-  │ 算力受限        │ ───────────►  │ 带宽受限        │
-  │ 大 GEMM、TTFT  │  搬运          │ 大批、          │
-  │                │  (NixlConn.)  │ 平滑 ITL       │
-  └────────────────┘               └───────────────┘
-  每个池为自己的瓶颈调优，而非一块 GPU 折中
+**PD 分离**把同一思路搬到*硬件*层：prefill 与 decode 跑在各自的池上，KV 在两者间流动。这是一个请求跨节点流动——拓扑图，按 ADR-0005 用 Mermaid：
+
+```mermaid
+flowchart LR
+    C["client"] --> P["proxy / router"]
+    P -->|"1. prefill request<br/>(max_tokens=1)"| PF["PREFILL pool<br/>compute-bound · big GEMMs<br/>kv_role: kv_producer"]
+    PF -->|"2. KV cache + kv_transfer_params<br/>(NixlConnector)"| DE["DECODE pool<br/>memory-bound · big batches<br/>kv_role: kv_consumer"]
+    P -->|"3. decode request<br/>(same request id)"| DE
+    DE -->|"streamed tokens"| C
 ```
 
 三个要记的形状：
@@ -71,6 +74,14 @@ Prefill 与 decode 胃口相反：prefill 要裸 FLOPs（算力受限、一次�
 ### 3.3 贯穿主线
 
 两种技术都在回答「prefill 与 decode 想要的不一样」。Chunked prefill 在一块 GPU 上**交织**它们（分时）；PD 分离把它们**分开**到不同 GPU（分空间）。认出这个共同根源就是面试级的洞见。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+Chunked prefill 不是一条单独的代码路径——它从 V1 调度器*数 token 的方式*里自然掉出来。打开 [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py) 里的 **`Scheduler.schedule()`**，读它自己的注释（已在 v0.26.0 核实）：
+
+> *「调度器里没有『decode 阶段』也没有『prefill 阶段』。每个请求只有 `num_computed_tokens` 与 `num_tokens_with_spec` …… 每一步，调度器都试图分配 token …… 让每个请求的 `num_computed_tokens` 追上它的 `num_tokens_with_spec`。这一般到足以覆盖 chunked prefill、prefix caching、speculative decoding ……」*
+
+这就是全部诀窍：一个 5000-token prompt 的请求只是 `num_computed_tokens = 0`、`num_tokens_with_spec = 5000`。每一步，`schedule()` 先把 `token_budget = self.max_num_scheduled_tokens`（默认取 `max_num_batched_tokens`）初始化好，让 running decode 各取一个 token，再给某个 prefill **仅仅它剩余 token 里还塞得进预算的那么多**——那截剩料*就是* chunk。其余等下一步；不需要什么「切分这个 prefill」的特殊分支。一个每请求上限 **`long_prefill_token_threshold`** 还额外限制一步能吃掉一条长 prompt 多少。所以 `enable_chunked_prefill` 与其说是打开一套算法，不如说是*允许* prefill 被部分调度、而非全有或全无。（该 flag 本身在 [`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py) 的 `SchedulerConfig` 上。）
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -164,6 +175,7 @@ print(len(llm.generate(prompts, SamplingParams(max_tokens=32))), "responses")
 - **在一块 GPU 上上 PD 分离。** 它本质需要 ≥2 实例（一个 producer、一个 consumer）。单张 4090 上没什么可分离；那里 chunked prefill 才是你的 prefill/decode 杠杆。
 - **忘了 PD 的传输代价。** 在池间搬 KV cache 每请求都耗带宽与延迟；PD 只在「独立扩缩/调优两池」的收益盖过传输时才赢——是大集群决策，不是默认。
 - **把 chunked prefill 与 prefix caching 混淆。** Chunked prefill 把*一个* prefill 跨步切分；[prefix caching](prefix-caching.md) 为*共享*前缀完全跳过 prefill。不同杠杆，常一起用。
+- **到处找 `chunk_size` 旋钮。** 没有这个东西。如 V1 `schedule()` 所示（§3.4），一个 prefill 的 chunk 就是本步 decode 排完后剩下的 `token_budget`——你*间接*地用 `max_num_batched_tokens` 塑形它，并用 `long_prefill_token_threshold` 限制单条长 prompt 每步咬多大。找 `--chunk-size` 找不到，正说明你把机制误读成了固定切片，而它其实是「剩多少预算就切多少」。
 
 ## 7 · 面试连线
 
@@ -179,6 +191,7 @@ print(len(llm.generate(prompts, SamplingParams(max_tokens=32))), "responses")
 - [continuous-batching 课](continuous-batching.md)——这个调度器塑形的运行集；chunked prefill 决定每步内的*token 组合*。
 - [推理流程课](../part0/inference-flow.md)——为何 prefill 受算力约束、decode 受带宽约束，两种技术都利用的前提。
 - vLLM disaggregated-prefill 文档与 NixlConnector 使用指南——PD 的 `--kv-transfer-config` producer/consumer 配置。
+- vLLM 源码（v0.26.0）：[`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py)（`Scheduler.schedule`，`num_computed_tokens`/`token_budget` 机制）与 [`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)（`SchedulerConfig.enable_chunked_prefill`）—— §3.4 背后的代码。
 - Part 5 下一课：[prefix caching](prefix-caching.md)——当前缀重复时完全跳过 prefill。
 
 ## 9 · 自测小问

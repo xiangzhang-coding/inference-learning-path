@@ -15,7 +15,7 @@ Here's the trap. The obvious way to batch is: collect N requests, run them toget
 
 ## 2 · Mental model
 
-Picture time flowing left→right and the GPU's batch slots stacked vertically. Each `█` is a slot doing useful work in that step; each `·` is an **idle** slot (wasted GPU).
+Picture time flowing left→right and the GPU's batch slots stacked vertically. Each `█` is a slot doing useful work in that step; each `·` is an **idle** slot (wasted GPU). (A time × slot grid is a spatial/temporal layout, so ASCII, per ADR-0005.)
 
 ```text
 STATIC BATCHING (batch of 4, run until ALL finish, then next batch)
@@ -38,6 +38,18 @@ CONTINUOUS BATCHING (iteration-level: evict done, admit waiting, every step)
 ```
 
 *(The `R`-labels and step numbers above are a schematic sketch to show the mechanism — not the specific requests fed to the §4 simulation.)*
+
+And the mechanism itself is a loop — **admit → step → evict**, re-run every iteration (a control flow, so Mermaid, per ADR-0005):
+
+```mermaid
+flowchart TB
+    W["waiting queue<br/>(new requests)"] -->|"ADMIT while KV blocks<br/>+ slot budget allow"| R["running set<br/>(the live batch)"]
+    R --> S["STEP: one forward pass<br/>every running seq advances 1 token;<br/>newly admitted ones prefill"]
+    S --> E{"seq hit EOS<br/>or max_tokens?"}
+    E -->|"no"| R
+    E -->|"yes"| F["EVICT: free its KV blocks<br/>→ returned to the pool"]
+    F -->|"freed slot backfilled<br/>on the very next iteration"| W
+```
 
 Three shapes to hold:
 
@@ -85,6 +97,17 @@ Two vLLM knobs cap the batch directly:
 ### 3.3 Why this is *the* throughput lever
 
 Because decode is memory-bound, a batch of 1 wastes almost all the GPU's compute: you read all the weights to produce a single token. A batch of 32 reads the same weights once and produces 32 tokens — ~32× the useful work for the *same* memory traffic. Continuous batching keeps the batch **as full as KV capacity allows, at every step**, so you're always near that amortization sweet spot instead of draining down to a near-empty batch at the tail of each static round. That's why it's the first thing every inference engine does, and the first thing an interviewer will probe.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+The `admit → step → evict` loop isn't a metaphor — it's two real objects you can open (ADR-0002: read + reason, don't rewrite):
+
+- **The busy loop** lives in [`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py): `EngineCore.run_busy_loop()` repeatedly calls **`EngineCore.step()`**, and one `step()` is exactly *schedule → model forward → `update_from_output`* — one turn of §3.1's loop.
+- **The admit/evict decision** lives in [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py): **`Scheduler.schedule()`** builds one step's batch. Its own comment (verified at v0.26.0) is the whole lesson in three sentences:
+
+    > *"There's no 'decoding phase' nor 'prefill phase' in the scheduler. Each request just has `num_computed_tokens` and `num_tokens_with_spec`. At each step, the scheduler tries to assign tokens to the requests so that each request's `num_computed_tokens` can catch up [to] its `num_tokens_with_spec`."*
+
+    Concretely: `schedule()` initializes `token_budget = self.max_num_scheduled_tokens` (which defaults to `max_num_batched_tokens`), walks the **running** requests first assigning tokens from that budget, then **admits** from the waiting queue with whatever budget and KV blocks remain, and — when the block allocator can't find room — moves a request into `preempted_reqs` (the eviction-under-pressure path from §3.2). That single, phase-free pass is what makes vLLM's batching *continuous*: membership is re-decided every step, not every batch.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -198,6 +221,7 @@ for o in outputs:
 - **Reproducing static batching by accident.** A naive loop that calls `model.generate()` on a fixed list and *waits for all of it* before sending the next list is static batching in your own code — you've thrown away the engine's continuous scheduling. Stream requests in; don't barrier on whole batches.
 - **Padding waste (the HuggingFace `generate` trap).** Static batching typically pads all sequences to the longest length and computes the pad tokens — double waste (idle slots *and* wasted compute on padding). Continuous batching over a paged KV cache has no padding: each sequence occupies exactly the blocks it needs.
 - **Blaming latency on batching when it's admission.** If TTFT spikes under load, the cause is usually requests *waiting* for KV room (admission), not the batching discipline. The fix is capacity ([quantization](../part4/index.md), [KV-cache quant](../part4/quantization-methods.md), [PagedAttention](paged-attention.md)) or a smaller `max_num_batched_tokens` to prioritize new prefills — not abandoning continuous batching.
+- **Forgetting the running set can *shrink*, not just grow.** Admission is only half the story: when the KV pool is exhausted and the allocator can't hand out blocks, `schedule()` **preempts** a running sequence (`preempted_reqs`) — freeing its blocks and re-queuing it to resume later. So under memory pressure a sequence you thought was "running" can be evicted and re-admitted; steady low throughput with churn in the running count is the tell, and the cure is again capacity, not the scheduler.
 
 ## 7 · Interview links
 
@@ -212,6 +236,7 @@ Further reading:
 - Yu et al. — *Orca: A Distributed Serving System for Transformer-Based Generative Models* (OSDI '22) — the paper that introduced iteration-level (continuous) batching.
 - The [PagedAttention lesson](paged-attention.md) — why KV-cache capacity (not compute) usually limits admission, and how paging raises that ceiling.
 - The [inference-flow lesson](../part0/inference-flow.md) — why decode is memory-bound, the premise that makes batching nearly free.
+- vLLM source (v0.26.0): [`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py) (`EngineCore.step` / `run_busy_loop`) and [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py) (`Scheduler.schedule`) — the loop and the admit/evict decision from §3.4.
 - Next in Part 5: the [scheduler](scheduler-chunked-prefill-pd.md) (chunked prefill, PD disaggregation) — how the engine shapes *which* tokens run each step to balance TTFT against throughput.
 
 ## 9 · Self-check

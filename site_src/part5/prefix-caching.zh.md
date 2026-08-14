@@ -20,7 +20,7 @@
 
 ## 2 · 心智模型
 
-同一前缀，算一次，按内容哈希复用：
+同一前缀，算一次，按内容哈希复用（请求布局与哈希链是结构草图，按 ADR-0005 用 ASCII）：
 
 ```text
 三个请求，都以同一段 512-token system prompt 开头：
@@ -42,6 +42,19 @@
   block0.hash = H(tokens[0:16])
   block1.hash = H(block0.hash, tokens[16:32])   ← 含父哈希 → 一个块只在
   block2.hash = H(block1.hash, tokens[32:48])     到它为止的整个前缀都相同时才匹配
+```
+
+以及引擎对每个新请求的块所做的判定——命中还是未命中（控制流，按 ADR-0005 用 Mermaid）：
+
+```mermaid
+flowchart TB
+    N["new request<br/>hash each FULL block<br/>(tokens + parent hash)"] --> L{"in cached_block_<br/>hash_to_block?"}
+    L -->|"HIT"| T["touch(): ref_cnt++<br/>point block table at cached block"]
+    T --> SK["skip prefill for cached blocks;<br/>start at first uncached block"]
+    L -->|"MISS"| PF["normal prefill this block"]
+    PF --> RG["cache_full_blocks():<br/>register the new full block's hash"]
+    SK --> D["decode the unique suffix"]
+    RG --> D
 ```
 
 三个要记的形状：
@@ -68,6 +81,16 @@ vLLM 的自动 prefix caching（来自已核实的设计文档）「缓存已处
 ### 3.3 开启它，并路由到命中
 
 V1 引擎里 prefix caching **默认开启**（`enable_prefix_caching`）。值得知道的一个系统推论：命中只在请求落到**已持有那些块的实例**上才有用。在多副本规模上这催生 **KV-cache-aware routing**——把请求路由到最可能已缓存其前缀的副本（如按 system prompt 哈希），而非 round-robin。那是生产拓扑话题（Part 7/8），但它是本课的自然延伸：缓存制造命中，路由确保你落在命中上。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+Prefix caching 复用的正是 [PagedAttention 课](paged-attention.md) 那个 block manager——几乎没有新机件，这正是重点（ADR-0002：读懂 + 会推理）：
+
+- **设计文档**——[`docs/design/prefix_caching.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/prefix_caching.md)（v0.26.0 随附）是父链块哈希与「只整块」规则的叙述来源。它的 *Hashing Algorithms* 一节就是那些已核实事实的出处：默认是 **`sha256`**（走 Python `pickle`），`sha256_cbor` 给出可复现、跨语言的哈希，`xxhash` 更快但不抗碰撞——用 **`--prefix-caching-hash-algo`** 选择。
+- **查找与登记**——这两个动词在 [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py) 的 `BlockPool` 上：**`get_cached_block(...)`** 查 `cached_block_hash_to_block` 表判命中（§3.2 命中路径），**`cache_full_blocks(...)`** 登记一个刚算好的*整*块让后续请求能命中它（§3.2 未命中路径）。命中里的 `touch()`——就是 [PagedAttention 读源码](paged-attention.md)（§3.5）里那个——把块从驱逐队列里救回来。
+- **块哈希**——每块的哈希（token + 父哈希 + 元数据）由 [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) 里的哈希 helper 计算，正是定义 `KVCacheBlock._block_hash` 的那个文件。那条父链就是 §3.1 的正确性保证，落成代码。
+
+所以整个特性就是：*哈希整块（kv_cache_utils）→ 查找（`get_cached_block`）→ 命中则 `touch` + 跳过，未命中则 prefill + `cache_full_blocks`*——完全骑在你已经读过的那个分配器上。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -160,6 +183,7 @@ print([o.outputs[0].text[:30] for o in out])
 - **假设它花额外内存。** 它复用同一[块池](paged-attention.md)；缓存但未引用的块只是驱逐候选，有压力时被回收。稳态内存不变。
 - **在低共享流量上高估它。** prompt 各异、无共享前缀时，prefix caching 几乎无用。它的价值完全是你流量前缀共享率的函数——先测命中率再声称收益。
 - **多副本规模上忽略路由。** 命中只在持有块的副本上有用。round-robin 把请求打散、拉垮命中率；[KV-cache-aware routing](../glossary.md) 才能跨副本保住它。
+- **换哈希算法却不权衡取舍。** `--prefix-caching-hash-algo` 默认 `sha256`（经 Python `pickle` 序列化，所以原始哈希字节不保证跨进程/语言稳定）；`sha256_cbor` 才是可复现、跨语言的选择；`xxhash`/`xxhash_cbor` 更快但**不抗碰撞**——理论上一次哈希碰撞可能在共享部署里把一个租户的 KV 递给另一个（数据泄露）。为速度改用 `xxhash` 只应在你接受该风险后；别假设默认哈希的字节能跨主机移植。
 
 ## 7 · 面试连线
 
@@ -174,6 +198,7 @@ print([o.outputs[0].text[:30] for o in out])
 - vLLM `docs/design/prefix_caching.md`——此处引用的哈希块身份方案与只整块规则。
 - [PagedAttention 课](paged-attention.md)——prefix caching 依托的 block manager 与 `ref_cnt`/`touch()` 机制。
 - [调度器课](scheduler-chunked-prefill-pd.md)——chunked prefill（切分一个 prefill）是姊妹杠杆；prefix caching（跳过共享 prefill）常与它叠加。
+- vLLM 源码（v0.26.0）：[`docs/design/prefix_caching.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/prefix_caching.md)（哈希方案与 `--prefix-caching-hash-algo`）与 [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py)（`get_cached_block`、`cache_full_blocks`、`touch`）—— §3.4 背后的代码。
 - Part 7–8——KV-cache-aware routing 与多副本服务，命中率在此成为集群级议题。
 
 ## 9 · 自测小问

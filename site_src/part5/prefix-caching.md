@@ -20,7 +20,7 @@ Without prefix caching, every one of those requests re-runs [prefill](../part0/i
 
 ## 2 · Mental model
 
-Same prefix, computed once, reused by content hash:
+Same prefix, computed once, reused by content hash (the request layout and hash chain are structural sketches, so ASCII, per ADR-0005):
 
 ```text
 THREE requests, all starting with the same 512-token system prompt:
@@ -42,6 +42,19 @@ BLOCK HASH CHAIN (why position is safe):
   block0.hash = H(tokens[0:16])
   block1.hash = H(block0.hash, tokens[16:32])   ← includes parent → a block only matches
   block2.hash = H(block1.hash, tokens[32:48])     if the ENTIRE prefix up to it is identical
+```
+
+And the decision the engine makes for each new request's blocks — hit or miss (a control flow, so Mermaid, per ADR-0005):
+
+```mermaid
+flowchart TB
+    N["new request<br/>hash each FULL block<br/>(tokens + parent hash)"] --> L{"in cached_block_<br/>hash_to_block?"}
+    L -->|"HIT"| T["touch(): ref_cnt++<br/>point block table at cached block"]
+    T --> SK["skip prefill for cached blocks;<br/>start at first uncached block"]
+    L -->|"MISS"| PF["normal prefill this block"]
+    PF --> RG["cache_full_blocks():<br/>register the new full block's hash"]
+    SK --> D["decode the unique suffix"]
+    RG --> D
 ```
 
 Three shapes to hold:
@@ -68,6 +81,16 @@ Cached blocks are reference-counted, so a block backing an active prefix isn't e
 ### 3.3 Turning it on, and routing to hits
 
 In the V1 engine prefix caching is **on by default** (`enable_prefix_caching`). The one systems corollary worth knowing: a cache hit only helps if the request lands on the **instance that already holds those blocks**. At multi-replica scale that motivates **KV-cache-aware routing** — route a request to the replica most likely to have its prefix cached (e.g. by hashing the system prompt), instead of round-robin. That's a production-topology topic (Part 7/8), but it's the natural extension of this lesson: caching creates the hit; routing makes sure you land on it.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+Prefix caching reuses the exact block manager from the [PagedAttention lesson](paged-attention.md) — there's almost no new machinery, which is the point (ADR-0002: read + reason):
+
+- **The design doc** — [`docs/design/prefix_caching.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/prefix_caching.md) (shipped at v0.26.0) is the narrative source of the parent-chained block hash and the full-blocks-only rule. Its *Hashing Algorithms* section is where the verified facts come from: the default is **`sha256`** (via Python `pickle`), `sha256_cbor` gives reproducible cross-language hashes, and `xxhash` is faster but not collision-safe — selectable with **`--prefix-caching-hash-algo`**.
+- **The lookup and register** — the two verbs live on `BlockPool` in [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py): **`get_cached_block(...)`** consults the `cached_block_hash_to_block` map for a hit (the §3.2 hit path), and **`cache_full_blocks(...)`** registers a freshly-computed *full* block so future requests can hit it (the §3.2 miss path). The hit's `touch()` — the same one from the [PagedAttention read-along](paged-attention.md) (§3.5) — is what rescues a block from the eviction queue.
+- **The block hash** — the per-block hash (tokens + parent hash + metadata) is computed by the hashing helpers in [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py), the same file that defines `KVCacheBlock._block_hash`. That parent-chaining is the §3.1 correctness guarantee, in code.
+
+So the whole feature is: *hash the full blocks (kv_cache_utils) → look them up (`get_cached_block`) → on hit `touch` + skip, on miss prefill + `cache_full_blocks`* — riding entirely on the allocator you already read.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -160,6 +183,7 @@ print([o.outputs[0].text[:30] for o in out])
 - **Assuming it costs extra memory.** It reuses the same [block pool](paged-attention.md); cached-but-unreferenced blocks are just eviction candidates that get reclaimed under pressure. Steady-state memory is unchanged.
 - **Over-crediting it on low-sharing traffic.** With unique prompts and no shared prefix, prefix caching does ~nothing. Its value is entirely a function of your traffic's prefix-sharing rate — measure the hit rate before claiming a win.
 - **Ignoring routing at multi-replica scale.** A hit only helps on the replica that holds the blocks. Round-robin routing scatters requests and tanks the hit rate; [KV-cache-aware routing](../glossary.md) is what preserves it across replicas.
+- **Swapping the hash algorithm without weighing the trade.** `--prefix-caching-hash-algo` defaults to `sha256` (serialized via Python `pickle`, so the raw hash bytes aren't guaranteed stable across processes/languages); `sha256_cbor` is the reproducible, cross-language choice; `xxhash`/`xxhash_cbor` are faster but **not collision-safe** — a theoretical hash collision could hand one tenant's KV to another (a data leak) in a shared deployment. Reach for `xxhash` for speed only once you accept that risk; don't assume the default's bytes are portable across hosts.
 
 ## 7 · Interview links
 
@@ -174,6 +198,7 @@ Further reading:
 - vLLM `docs/design/prefix_caching.md` — the hash-based block-identity scheme and the full-blocks-only rule quoted here.
 - The [PagedAttention lesson](paged-attention.md) — the block manager and `ref_cnt`/`touch()` mechanics that prefix caching rides on.
 - The [scheduler lesson](scheduler-chunked-prefill-pd.md) — chunked prefill (split one prefill) is the sibling lever; prefix caching (skip a shared prefill) often stacks with it.
+- vLLM source (v0.26.0): [`docs/design/prefix_caching.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/prefix_caching.md) (the hash scheme + `--prefix-caching-hash-algo`) and [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py) (`get_cached_block`, `cache_full_blocks`, `touch`) — the code behind §3.4.
 - Parts 7–8 — KV-cache-aware routing and multi-replica serving, where hit rate becomes a fleet-level concern.
 
 ## 9 · Self-check

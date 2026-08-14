@@ -15,7 +15,7 @@
 
 ## 2 · 心智模型
 
-把时间想成从左到右流动，GPU 的 batch 槽位竖着堆叠。每个 `█` 是该步做有用功的槽位；每个 `·` 是**空转**槽位（浪费的 GPU）。
+把时间想成从左到右流动，GPU 的 batch 槽位竖着堆叠。每个 `█` 是该步做有用功的槽位；每个 `·` 是**空转**槽位（浪费的 GPU）。（时间 × 槽位的网格是空间/时序布局，按 ADR-0005 用 ASCII。）
 
 ```text
 STATIC BATCHING（batch=4，跑到全部结束，再下一批）
@@ -38,6 +38,18 @@ CONTINUOUS BATCHING（迭代级：每步驱逐已完、塞入等待）
 ```
 
 *（上图的 `R` 标号与步数是展示机制的示意草图——不是喂给 §4 仿真的那批具体请求。）*
+
+而机制本身是一个循环——**admit（塞入）→ step（前向一步）→ evict（驱逐）**，每次迭代重跑一遍（控制流，按 ADR-0005 用 Mermaid）：
+
+```mermaid
+flowchart TB
+    W["waiting queue<br/>(new requests)"] -->|"ADMIT while KV blocks<br/>+ slot budget allow"| R["running set<br/>(the live batch)"]
+    R --> S["STEP: one forward pass<br/>every running seq advances 1 token;<br/>newly admitted ones prefill"]
+    S --> E{"seq hit EOS<br/>or max_tokens?"}
+    E -->|"no"| R
+    E -->|"yes"| F["EVICT: free its KV blocks<br/>→ returned to the pool"]
+    F -->|"freed slot backfilled<br/>on the very next iteration"| W
+```
 
 三个要记的形状：
 
@@ -85,6 +97,17 @@ loop forever:
 ### 3.3 为什么这是*那个*吞吐杠杆
 
 因为 decode 是 memory-bound，batch=1 几乎浪费了 GPU 全部算力：你读完所有权重只为产出一个 token。batch=32 读一次同样的权重却产出 32 个 token——*同样的*访存量换来约 32 倍有用功。Continuous batching 把批**在每一步都保持在 KV 容量允许的最满**，所以你总在那个摊薄甜点附近，而不是像 static 每轮尾巴那样排空到接近空批。这就是为什么它是每个推理引擎做的第一件事，也是面试官会探的第一件事。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+`admit → step → evict` 循环不是比喻——它是两个你能打开来读的真实对象（ADR-0002：读懂 + 会推理，不重写）：
+
+- **忙循环**在 [`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py)：`EngineCore.run_busy_loop()` 反复调用 **`EngineCore.step()`**，而一次 `step()` 恰好就是 *schedule → 模型前向 → `update_from_output`*——§3.1 那个循环的一轮。
+- **塞入/驱逐的决策**在 [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py)：**`Scheduler.schedule()`** 构建一步的 batch。它自己的注释（已在 v0.26.0 核实）三句话就是整节课：
+
+    > *「调度器里没有『decode 阶段』也没有『prefill 阶段』。每个请求只有 `num_computed_tokens` 与 `num_tokens_with_spec`。每一步，调度器都试图给各请求分配 token，让每个请求的 `num_computed_tokens` 追上它的 `num_tokens_with_spec`。」*
+
+    具体地：`schedule()` 先把 `token_budget = self.max_num_scheduled_tokens`（默认取 `max_num_batched_tokens`）初始化好，先遍历 **running** 请求从该预算里分 token，再用剩下的预算与 KV block 从 waiting 队列**塞入**新请求——当 block 分配器找不到空间时，把某个请求挪进 `preempted_reqs`（§3.2 那条内存压力下的驱逐路径）。正是这个无阶段之分的单趟遍历让 vLLM 的批变得*连续*：成员每步重判，而非每批一判。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -198,6 +221,7 @@ for o in outputs:
 - **无意中复现了 static batching。** 一个朴素循环，对固定列表调 `model.generate()` 并*等它全部完成*才发下一个列表——那就是你自己代码里的 static batching，你把引擎的连续调度扔掉了。请把请求流式送入；别在整批上设 barrier。
 - **padding 浪费（HuggingFace `generate` 陷阱）。** Static batching 通常把所有序列 pad 到最长长度并计算这些 pad token——双重浪费（空转槽位*加上*在 padding 上浪费的算力）。paged KV cache 上的 continuous batching 没有 padding：每个序列只占它需要的 block。
 - **把延迟归咎于 batching，其实是准入。** 若负载下 TTFT 飙升，原因通常是请求在*等* KV 空间（准入），不是 batching 纪律。修法是容量（[量化](../part4/index.md)、[KV-cache 量化](../part4/quantization-methods.md)、[PagedAttention](paged-attention.md)）或调小 `max_num_batched_tokens` 以优先新 prefill——而不是放弃 continuous batching。
+- **忘了运行集会*缩*、不只是*涨*。** 准入只是一半：当 KV 池耗尽、分配器发不出 block 时，`schedule()` 会**抢占**一个在跑的序列（`preempted_reqs`）——释放它的 block 并重新入队，稍后恢复。所以内存压力下，你以为「在跑」的序列可能被驱逐再重新准入；稳定的低吞吐伴随 running 计数抖动就是信号，而解药同样是容量，不是调度器。
 
 ## 7 · 面试连线
 
@@ -212,6 +236,7 @@ for o in outputs:
 - Yu 等 —— *Orca: A Distributed Serving System for Transformer-Based Generative Models*（OSDI '22）—— 提出迭代级（continuous）batching 的论文。
 - [PagedAttention 课](paged-attention.md) —— 为什么 KV-cache 容量（而非算力）通常限制准入，以及分页如何抬高那道天花板。
 - [推理流程课](../part0/inference-flow.md) —— 为什么 decode 是 memory-bound，这是让 batching 近乎免费的前提。
+- vLLM 源码（v0.26.0）：[`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py)（`EngineCore.step` / `run_busy_loop`）与 [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py)（`Scheduler.schedule`）——§3.4 的循环与塞入/驱逐决策。
 - Part 5 下一课：[调度器](scheduler-chunked-prefill-pd.md)（chunked prefill、PD 分离）—— 引擎如何塑形*每步跑哪些* token，以平衡 TTFT 与吞吐。
 
 ## 9 · 自测小问
