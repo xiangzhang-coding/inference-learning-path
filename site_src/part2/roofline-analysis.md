@@ -31,6 +31,48 @@ ONE DECODER LAYER, decomposed into operators
   ATTN  archetype:  bytes ∝ KV size (∝ S), FLOPs ∝ S too             → the S cancels; regime is fixed
 ```
 
+Now plot where those operators actually land on the roofline — the sloped **memory roof** ($I\cdot B$), the flat **compute roof** ($P$), and the ridge $I^{*}$ that divides them:
+
+<svg viewBox="0 0 760 430" role="img" xmlns="http://www.w3.org/2000/svg" aria-label="Roofline plot (log-log): a sloped memory roof I·B meets a flat compute roof P at the ridge point I*≈165 FLOP/byte. Decode GEMM sits at I≈1 and decode attention at I≈7 — both on the sloped memory-bound roof, far left of the ridge; prefill sits on the flat compute-bound roof past the ridge." style="max-width:100%;height:auto;font-family:inherit">
+  <title>Per-operator roofline (RTX 4090, illustrative)</title>
+  <g stroke="currentColor" stroke-opacity="0.12">
+    <line x1="220" y1="45" x2="220" y2="360"/><line x1="370" y1="45" x2="370" y2="360"/>
+    <line x1="520" y1="45" x2="520" y2="360"/><line x1="670" y1="45" x2="670" y2="360"/>
+    <line x1="70" y1="260" x2="700" y2="260"/><line x1="70" y1="160" x2="700" y2="160"/>
+    <line x1="70" y1="60" x2="700" y2="60"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" fill="none">
+    <line x1="70" y1="360" x2="700" y2="360"/><line x1="70" y1="360" x2="70" y2="45"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none">
+    <line x1="70" y1="360" x2="403" y2="138"/><line x1="403" y1="138" x2="700" y2="138"/>
+  </g>
+  <line x1="403" y1="138" x2="403" y2="360" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.6"/>
+  <g fill="currentColor">
+    <circle cx="72" cy="358" r="4"/><circle cx="197" cy="275" r="4"/>
+    <circle cx="403" cy="138" r="4.5"/><circle cx="530" cy="138" r="4"/>
+  </g>
+  <g fill="currentColor" font-size="12.5">
+    <text x="98" y="352">GEMM decode · I≈1</text>
+    <text x="210" y="272">attn decode · I≈7</text>
+    <text x="300" y="120" text-anchor="end">ridge  I*=P/B ≈ 165</text>
+    <text x="524" y="128" text-anchor="end">prefill · compute-bound</text>
+  </g>
+  <g fill="currentColor" font-size="12.5" font-style="italic" opacity="0.7">
+    <text x="120" y="205">memory-bound</text>
+    <text x="545" y="175">compute-bound</text>
+  </g>
+  <g fill="currentColor" font-size="11" opacity="0.75" text-anchor="middle">
+    <text x="70" y="378">1</text><text x="220" y="378">10</text><text x="370" y="378">100</text>
+    <text x="520" y="378">1k</text><text x="670" y="378">10k</text>
+  </g>
+  <g fill="currentColor" font-size="11" opacity="0.75" text-anchor="end">
+    <text x="62" y="364">1</text><text x="62" y="264">10</text><text x="62" y="164">100</text><text x="62" y="64">1k</text>
+  </g>
+  <text x="385" y="404" fill="currentColor" font-size="12.5" text-anchor="middle">arithmetic intensity  I  (FLOP/byte, log)</text>
+  <text x="24" y="200" fill="currentColor" font-size="12.5" text-anchor="middle" transform="rotate(-90 24 200)">attainable  (TFLOP/s, log)</text>
+</svg>
+
 Two shapes to hold:
 
 - **A GEMM's intensity is a dial you turn with the batch/token count $M$.** The weight matrix is read from HBM *once per step* no matter how many tokens ride along; pack more tokens ($M$) into that one read and each weight-byte does more FLOPs. That is the entire mechanical reason batching raises throughput — and it's a number you can compute.
@@ -194,6 +236,15 @@ ridge point I* = 165 FLOP/byte
 ```
 
 Three lessons in one table: (1) at $M=1$ **every** GEMM is memory-bound at $I\approx1$; (2) by $M=256$ the fat FFN GEMMs are compute-bound but the *skinny* GQA projections (`k_proj/v_proj`, $N=512$) still lag at 162.9 — narrow matrices need more batch to cross; (3) decode attention is stuck at **7** no matter the context, while prefill attention rockets past the ridge — the same operator, opposite regimes.
+
+### Reading it in vLLM's source (v0.26.0)
+
+The two archetypes are two different code paths in vLLM, and finding them is the point of this read-along:
+
+- **The GEMMs** are the linear layers in [`vllm/model_executor/layers/linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/linear.py) — `QKVParallelLinear` (the fused Q/K/V projection), `MergedColumnParallelLinear` (gate + up), and `RowParallelLinear` (`o_proj`, `down_proj`). Their intensity is the `gemm_intensity(M, K, N)` you just wrote; the batch dimension `M` is what a scheduler packs to push them right across the ridge.
+- **The attention operator** is *not* one of those — it is dispatched through `AttentionBackendEnum` in [`vllm/v1/attention/backends/registry.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/registry.py), whose `FLASH_ATTN` entry resolves to `vllm.v1.attention.backends.flash_attn.FlashAttentionImpl`. That's the op whose decode intensity is pinned at $2n_q/(n_{\text{kv}}b)$, context-independent.
+
+Reading just those two files is enough to see why the engine treats "a batch of projection GEMMs" and "the attention kernel" as fundamentally different beasts on the roofline — the next lesson opens the attention one.
 
 ## 5 · Lab — see the GEMM roofline on your own card
 

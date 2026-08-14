@@ -16,20 +16,62 @@
 一个 decoder 层就是两类算子，它们因相反的理由落在 roofline 上：
 
 ```text
-一个 DECODER 层，按算子拆开
-                                             强度由谁决定...
-  x ──► [ q_proj ]  [ k_proj ]  [ v_proj ]   <- GEMM：权重 W[K×N] 跨 M 个 token
-             │           │           │           复用。I 随 M 上升。
-             └─────► [  ATTENTION  ] ◄──┘      <- 不是权重 matmul：Q·Kᵀ、·V。
-                          │                       「权重」= KV cache，随上下文 S 增长。
-                          ▼                       强度由 GQA 比例决定。
+ONE DECODER LAYER, decomposed into operators
+                                             intensity set by...
+  x ──► [ q_proj ]  [ k_proj ]  [ v_proj ]   <- GEMM: weight W[K×N] reused
+             │           │           │           across M tokens. I rises with M.
+             └─────► [  ATTENTION  ] ◄──┘      <- NOT a weight matmul: Q·Kᵀ, ·V.
+                          │                       "weights" = KV cache, which GROWS
+                          ▼                       with context S. I set by GQA ratio.
                      [  o_proj  ]              <- GEMM
                           │
-                     [ gate ][ up ]  ─► SwiGLU ─► [ down ]   <- GEMM（FLOP 大头）
+                     [ gate ][ up ]  ─► SwiGLU ─► [ down ]   <- GEMMs (the FLOP bulk)
 
-  GEMM 原型：权重字节固定，FLOPs ∝ M（在飞的 token 数） → 靠 batch 越过拐点
-  ATTN 原型：字节 ∝ KV 大小（∝ S），FLOPs 也 ∝ S      → S 抵消；状态被架构钉死
+  GEMM  archetype:  fixed weight bytes, FLOPs ∝ M (tokens in flight)  → batch to cross the ridge
+  ATTN  archetype:  bytes ∝ KV size (∝ S), FLOPs ∝ S too             → the S cancels; regime is fixed
 ```
+
+再把这些算子实际画到 roofline 上——斜的**内存屋顶**（$I\cdot B$）、平的**算力屋顶**（$P$），以及分隔二者的拐点 $I^{*}$：
+
+<svg viewBox="0 0 760 430" role="img" xmlns="http://www.w3.org/2000/svg" aria-label="Roofline plot (log-log): a sloped memory roof I·B meets a flat compute roof P at the ridge point I*≈165 FLOP/byte. Decode GEMM sits at I≈1 and decode attention at I≈7 — both on the sloped memory-bound roof, far left of the ridge; prefill sits on the flat compute-bound roof past the ridge." style="max-width:100%;height:auto;font-family:inherit">
+  <title>Per-operator roofline (RTX 4090, illustrative)</title>
+  <g stroke="currentColor" stroke-opacity="0.12">
+    <line x1="220" y1="45" x2="220" y2="360"/><line x1="370" y1="45" x2="370" y2="360"/>
+    <line x1="520" y1="45" x2="520" y2="360"/><line x1="670" y1="45" x2="670" y2="360"/>
+    <line x1="70" y1="260" x2="700" y2="260"/><line x1="70" y1="160" x2="700" y2="160"/>
+    <line x1="70" y1="60" x2="700" y2="60"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1.2" fill="none">
+    <line x1="70" y1="360" x2="700" y2="360"/><line x1="70" y1="360" x2="70" y2="45"/>
+  </g>
+  <g stroke="currentColor" stroke-width="2.5" fill="none">
+    <line x1="70" y1="360" x2="403" y2="138"/><line x1="403" y1="138" x2="700" y2="138"/>
+  </g>
+  <line x1="403" y1="138" x2="403" y2="360" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.6"/>
+  <g fill="currentColor">
+    <circle cx="72" cy="358" r="4"/><circle cx="197" cy="275" r="4"/>
+    <circle cx="403" cy="138" r="4.5"/><circle cx="530" cy="138" r="4"/>
+  </g>
+  <g fill="currentColor" font-size="12.5">
+    <text x="98" y="352">GEMM decode · I≈1</text>
+    <text x="210" y="272">attn decode · I≈7</text>
+    <text x="300" y="120" text-anchor="end">ridge  I*=P/B ≈ 165</text>
+    <text x="524" y="128" text-anchor="end">prefill · compute-bound</text>
+  </g>
+  <g fill="currentColor" font-size="12.5" font-style="italic" opacity="0.7">
+    <text x="120" y="205">memory-bound</text>
+    <text x="545" y="175">compute-bound</text>
+  </g>
+  <g fill="currentColor" font-size="11" opacity="0.75" text-anchor="middle">
+    <text x="70" y="378">1</text><text x="220" y="378">10</text><text x="370" y="378">100</text>
+    <text x="520" y="378">1k</text><text x="670" y="378">10k</text>
+  </g>
+  <g fill="currentColor" font-size="11" opacity="0.75" text-anchor="end">
+    <text x="62" y="364">1</text><text x="62" y="264">10</text><text x="62" y="164">100</text><text x="62" y="64">1k</text>
+  </g>
+  <text x="385" y="404" fill="currentColor" font-size="12.5" text-anchor="middle">arithmetic intensity  I  (FLOP/byte, log)</text>
+  <text x="24" y="200" fill="currentColor" font-size="12.5" text-anchor="middle" transform="rotate(-90 24 200)">attainable  (TFLOP/s, log)</text>
+</svg>
 
 要握住的两个形状：
 
@@ -194,6 +236,15 @@ if __name__ == "__main__":
 ```
 
 一张表三个教训：（1）$M=1$ 时**每个** GEMM 都在 $I\approx1$ memory-bound；（2）到 $M=256$，肥的 FFN GEMM 已 compute-bound，但*瘦的* GQA projection（`k_proj/v_proj`，$N=512$）仍在 162.9 落后——窄矩阵要更大 batch 才越线；（3）decode attention 无论上下文都卡在 **7**，而 prefill attention 冲过拐点——同一算子、相反状态。
+
+### 在 vLLM 源码里读它（v0.26.0）
+
+两种原型在 vLLM 里是两条不同的代码路径，找到它们正是这段 read-along 的意义：
+
+- **GEMM** 是 [`vllm/model_executor/layers/linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/linear.py) 里的线性层——`QKVParallelLinear`（融合的 Q/K/V 投影）、`MergedColumnParallelLinear`（gate + up）、`RowParallelLinear`（`o_proj`、`down_proj`）。它们的强度就是你刚写的 `gemm_intensity(M, K, N)`；调度器塞进去的 batch 维 `M` 正是把它们推过拐点的那个量。
+- **Attention 算子**不是其中之一——它经 [`vllm/v1/attention/backends/registry.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/registry.py) 里的 `AttentionBackendEnum` 派发，其 `FLASH_ATTN` 项解析到 `vllm.v1.attention.backends.flash_attn.FlashAttentionImpl`。这就是那个 decode 强度被钉在 $2n_q/(n_{\text{kv}}b)$、与上下文无关的算子。
+
+只读这两个文件，就足以看清引擎为何把「一批投影 GEMM」和「attention kernel」当作 roofline 上两种本质不同的东西——下一课就打开 attention 那一个。
 
 ## 5 · Lab —— 在你自己的卡上看见 GEMM roofline
 

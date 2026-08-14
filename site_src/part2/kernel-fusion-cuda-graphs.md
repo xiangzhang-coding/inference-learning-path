@@ -128,6 +128,15 @@ BF16 weights (~14.2 GiB): 430 kernels | compute  15.2 ms | launch 2.15 ms
 
 Same 2.15 ms launch tax in both — but it's **36%** on top of the AWQ model's small 5.9 ms compute versus **14%** on the BF16 model's 15.2 ms. Quantize the weights to go faster, and CUDA graphs matter *more*, not less: you shrank the compute, so the fixed launch overhead looms larger. That's why vLLM captures graphs by default and why it's most impactful on the quantized, small-batch decode you'll run on a 4090.
 
+### Reading it in vLLM's source (v0.26.0)
+
+The `enforce_eager` switch you flip in the Lab is a real object graph — worth tracing to see "record once, replay with one submit" in code:
+
+- The mode is `CUDAGraphMode` in [`vllm/config/compilation.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/compilation.py): `NONE`, `PIECEWISE`, `FULL`, and the composite `FULL_AND_PIECEWISE = (FULL, PIECEWISE)` — full graphs for uniform-decode batches, piecewise for prefill/mixed. It's set via `CompilationConfig.cudagraph_mode` (the `-cc '{"cudagraph_mode": "..."}'` flag); `enforce_eager=True` forces `NONE`.
+- At runtime a `CUDAGraphWrapper` holds one captured graph per mode and, through the `CudagraphDispatcher`, reads the forward context to decide **replay vs. eager** for the current `BatchDescriptor` (batch shape + mode). Capture happens during warmup: the GPU model runner's `capture_model()` runs dummy forwards over each batch-size bucket and records them — the "record k1..kN once" box in §2, made concrete. (Design: `docs/design/cuda_graphs.md`.)
+
+So §4's `graph_ms()` (one submit) versus `eager_ms()` ($N$ submits) is exactly `CUDAGraphMode.FULL` versus `NONE`, and `--enforce-eager` is the one-line switch between them.
+
 ## 5 · Lab — measure the launch tax, then toggle it in vLLM
 
 !!! gpu "GPU Lab"

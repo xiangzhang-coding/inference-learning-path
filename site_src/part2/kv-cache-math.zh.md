@@ -16,18 +16,18 @@
 显存是一根堆叠条，而 KV 缓存是*固定成本之后剩下的一切*：
 
 ```text
-  24 GB 卡（gpu_memory_utilization 封住可用高度，默认 0.92）
+  24 GB card  (gpu_memory_utilization caps the usable height, default 0.92)
   ┌──────────────────────────────────────────────┐  ── util · 24 GB ──┐
-  │  CUDA context + 框架            ~1–2 GB         │  固定开销          │
+  │  CUDA context + framework      ~1–2 GB         │  fixed overhead    │
   ├──────────────────────────────────────────────┤                    │
-  │  模型权重        ~14 GB BF16 / ~5–6 GB AWQ      │  固定，一次付清    │  可用
+  │  model weights   ~14 GB BF16 / ~5–6 GB AWQ     │  fixed, paid once  │  usable
   ├──────────────────────────────────────────────┤                    │
-  │  激活 / workspace          随 batch 缩放        │  ~1 GB 上下       │
+  │  activations / workspace   scales with batch   │  ~1 GB-ish         │
   ├──────────────────────────────────────────────┤                    │
-  │  KV 缓存  ◄── 剩下的一切 = 你的并发预算                             │
+  │  KV CACHE  ◄── everything left = your concurrency budget           │
   └──────────────────────────────────────────────┘  ───────────────────┘
-        并发  =  (KV 预算)  /  (每序列 KV)
-             =  (util·显存 − 权重 − 激活 − 开销) / (κ · S)
+        concurrency  =  (KV budget)  /  (KV per sequence)
+                     =  (util·VRAM − weights − activations − overhead) / (κ · S)
 ```
 
 要握住的两个形状：
@@ -144,6 +144,15 @@ AWQ + FP8 KV，目标 64 并发 -> 最大上下文 ~= 8484 tokens
 ```
 
 前三行是 §3 的表变成代码；最后一行回答容量规划者真正会被问的逆问题（「我们要 64 条并发流——能承诺多少上下文？」）。改一个字段——`util`、`overhead_gib`、`S`——重读这份计划即可。
+
+### 在 vLLM 源码里读它（v0.26.0）
+
+Lab 里读到的那两行启动日志，正是由做*这一课算术*的代码打印出来的——一段 read-along 把闭环合上：
+
+- [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) 计算可用 KV 字节，并打印 `GPU KV cache size: … tokens` 与 `Maximum concurrency for … tokens per request: …x`——也就是 $\text{KV}_{\text{budget}}/\kappa$ 以及它再除以 `max_model_len`，恰好是你的 `max_concurrency()`。
+- 这份预算随后给池定容：[`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py) 里的 `BlockPool` 分配 `num_gpu_blocks` 个定长块，[`vllm/v1/core/kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_manager.py) 里的 `KVCacheManager`（配合按注意力类型划分的 `SingleTypeKVCacheManager`）把块发给序列。块大小默认 `DEFAULT_BLOCK_SIZE = 16` 个 token（`vllm.config.cache`）——而 §6 的「block padding」坑，正是最后那个只填了一部分的 `KVCacheBlock`。
+
+所以当 Lab 报告的数字*略低于*你的规划器时，你看到的就是 `kv_cache_utils.py` 的诚实预算（利用率 + 真实开销）对你的理想预算——同一道减法，由引擎来做。
 
 ## 5 · Lab —— 拿你的计划对账 vLLM 自己的报告
 

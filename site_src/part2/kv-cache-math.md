@@ -145,6 +145,15 @@ AWQ + FP8 KV, target 64 concurrent -> max context ~= 8484 tokens
 
 The first three lines are the §3 table as code; the last line answers the inverse question a capacity planner actually gets asked ("we need 64 concurrent streams — how much context can we promise?"). Change one field — `util`, `overhead_gib`, `S` — and re-read the plan.
 
+### Reading it in vLLM's source (v0.26.0)
+
+The two startup log lines the Lab reads are printed by the code that does *this lesson's arithmetic* — a short read-along closes the loop:
+
+- [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) computes the available KV bytes and logs `GPU KV cache size: … tokens` and `Maximum concurrency for … tokens per request: …x` — i.e. $\text{KV}_{\text{budget}}/\kappa$ and that divided by `max_model_len`, exactly your `max_concurrency()`.
+- That budget then sizes the pool: `BlockPool` in [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py) allocates `num_gpu_blocks` fixed-size blocks, and `KVCacheManager` in [`vllm/v1/core/kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_manager.py) (with a per-attention-type `SingleTypeKVCacheManager`) hands blocks to sequences. The block size defaults to `DEFAULT_BLOCK_SIZE = 16` tokens (`vllm.config.cache`) — and §6's "block padding" pitfall is exactly the last, partly-filled `KVCacheBlock`.
+
+So when the Lab's reported number sits *just below* your planner's, you're watching `kv_cache_utils.py`'s honest budget (utilization + real overhead) against your ideal one — the same subtraction, done by the engine.
+
 ## 5 · Lab — check your plan against vLLM's own report
 
 !!! gpu "GPU Lab"

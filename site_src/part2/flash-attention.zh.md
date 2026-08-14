@@ -16,20 +16,20 @@ FlashAttention 是解药，而且不是近似：它用**完全相同的 FLOPs** 
 算同一个 attention 的两种方式，用「什么越过 HBM 线」来对比：
 
 ```text
-朴素 attention —— 对 S×S 矩阵做三趟 HBM 往返
-  Q,K ─► [ S = QKᵀ ] ──写──► HBM   （S×S，例如 4096² = 每头 16.8M 个数）
+NAIVE attention — three HBM round-trips over an S×S matrix
+  Q,K ─► [ S = QKᵀ ] ──write──► HBM   (S×S, e.g. 4096² = 16.8M floats PER HEAD)
                                  │
-         [ P = softmax(S) ] ◄─读──┘ ──写──► HBM   （又一个 S×S）
+         [ P = softmax(S) ] ◄─read──┘ ──write──► HBM   (another S×S)
                                                   │
-         [ O = P·V ] ◄────────────────────读───┘     -> O(S²) 内存、3× 流量
+         [ O = P·V ] ◄────────────────────read───┘     -> O(S²) memory, 3× the traffic
 
-FLASH attention —— 单趟流式，S×S 在 SRAM 里生灭
-  对每个 Q 分块（行）:
-      初始化运行态 (m=-inf, l=0, O=0)          # 在 SRAM/寄存器里
-      对每个 K,V 分块（列）:                    # 沿序列流式
-          S_ij = Q_i · K_jᵀ                     # 小分块，留在片上
-          用 ONLINE SOFTMAX 更新 m,l,O          # 重标定、累加
-      把 O_i 写出一次                           # -> O(S) 内存，Q,K,V 各读一次
+FLASH attention — one streaming pass, S×S is born and dies in SRAM
+  for each Q tile (rows):
+      init running (m=-inf, l=0, O=0)         # in SRAM/registers
+      for each K,V tile (cols):               # stream over the sequence
+          S_ij = Q_i · K_jᵀ                    # small tile, stays on-chip
+          update m,l,O with ONLINE SOFTMAX     # rescale, accumulate
+      write O_i once                          # -> O(S) memory, read Q,K,V once
 ```
 
 要握住的两个形状：
@@ -134,6 +134,15 @@ max abs diff = 1.11e-16   （分块即等于完整 softmax）
 ```
 
 差异是机器 epsilon——浮点噪声，而非算法误差。流式、分块的计算与一次性 softmax 是*同一个函数*。这个等价性就是 FlashAttention 从不建 $S\times S$ 矩阵的全部许可证。
+
+### 在 vLLM 源码里读它（v0.26.0）
+
+你刚推理过的 flash kernel，被 vLLM 的 V1 attention backend 包裹起来。两个文件锚定这段 read-along：
+
+- 注册表 [`vllm/v1/attention/backends/registry.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/registry.py) 把 `AttentionBackendEnum.FLASH_ATTN → "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"`。这正是 `--attention-backend FLASH_ATTN`（或 `AttentionConfig(backend=AttentionBackendEnum.FLASH_ATTN)`）所选中的。
+- 实现在 [`vllm/v1/attention/backends/flash_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/flash_attn.py)：`FlashAttentionBackend` 声明元数据/形状契约，而 `FlashAttentionImpl.forward(...)` 就是那次把 Q、K、V——外加分页 KV cache 的 **block tables**——交给融合 flash kernel 的调用。那个 kernel *就是* §3 的 online-softmax tiling，用 CUDA 写成。
+
+你不会去重写这个 kernel（ADR-0002——读，不手写），但你现在能打开 `FlashAttentionImpl.forward` 并认出每一个参数：query、分页 K/V、softmax scale、causal 标志。顺着 block-tables 参数再走一跳，你就进入了 [Part 5](../part5/paged-attention.md) 要打开的 PagedAttention 机制。
 
 ## 5 · Lab —— 看着 $S^2$ 内存消失
 

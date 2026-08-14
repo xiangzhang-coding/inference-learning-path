@@ -135,6 +135,15 @@ max abs diff = 1.11e-16   (tiled == full softmax)
 
 The difference is machine epsilon — floating-point noise, not algorithmic error. The streaming, tiled computation is the *same function* as the one-shot softmax. That equivalence is the entire license for FlashAttention to never build the $S\times S$ matrix.
 
+### Reading it in vLLM's source (v0.26.0)
+
+The flash kernel you just reasoned about is wrapped by vLLM's V1 attention backend. Two files anchor the read-along:
+
+- The registry [`vllm/v1/attention/backends/registry.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/registry.py) maps `AttentionBackendEnum.FLASH_ATTN → "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"`. That's exactly what `--attention-backend FLASH_ATTN` (or `AttentionConfig(backend=AttentionBackendEnum.FLASH_ATTN)`) selects.
+- The implementation is [`vllm/v1/attention/backends/flash_attn.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/attention/backends/flash_attn.py): `FlashAttentionBackend` declares the metadata/shape contract, and `FlashAttentionImpl.forward(...)` is the call that hands Q, K, V — plus the paged KV-cache **block tables** — to the fused flash kernel. That kernel *is* the online-softmax tiling from §3, in CUDA.
+
+You won't rewrite that kernel (ADR-0002 — read, don't hand-write), but you can now open `FlashAttentionImpl.forward` and recognize every argument: the query, the paged K/V, the softmax scale, the causal flag. Follow the block-tables argument one hop further and you're inside the PagedAttention machinery that [Part 5](../part5/paged-attention.md) opens.
+
 ## 5 · Lab — watch the $S^2$ memory vanish
 
 !!! gpu "GPU Lab"

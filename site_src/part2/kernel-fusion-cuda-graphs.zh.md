@@ -16,19 +16,19 @@
 问题是一场 CPU↔GPU 的乒乓；两种解各自改变谁来启动：
 
 ```text
-EAGER —— CPU 逐个启动 kernel；GPU 在小 kernel 之间空转
-  CPU: [启动 k1]   [启动 k2]   [启动 k3]  ...  （每次提交 ~5 µs）
-  GPU:    [k1]▪▪空▪▪  [k2]▪▪空▪▪  [k3]▪▪空▪▪       <- GPU 在等 CPU
-          └ 小小的 memory-bound kernel；下一次启动还没到就算完了
+EAGER — CPU launches each kernel; GPU idles between tiny kernels
+  CPU: [launch k1]   [launch k2]   [launch k3]  ...  (~5 µs submit each)
+  GPU:    [k1]▪▪gap▪▪  [k2]▪▪gap▪▪  [k3]▪▪gap▪▪       <- GPU waits on the CPU
+          └ tiny memory-bound kernel; done before the next launch arrives
 
-KERNEL FUSION —— 合并算子，变成更少、更大的 kernel
-  CPU: [启动 fused]           GPU: [ norm+proj+bias+act 融合 ]   <- 更少启动、
-                                                                    更少 HBM 往返
+KERNEL FUSION — merge ops so there are fewer, bigger kernels
+  CPU: [launch fused]          GPU: [ norm+proj+bias+act fused ]   <- fewer launches,
+                                                                       fewer HBM trips
 
-CUDA GRAPH —— 把整串序列录制一次，用一次启动重放
-  捕获（一次）:  把 k1..kN 录进一张图
-  每一步:        CPU: [g.replay()]   GPU: [k1][k2][k3]...[kN]   <- 背靠背，
-                                                                   无逐 kernel 间隙
+CUDA GRAPH — record the whole sequence once, replay with ONE launch
+  capture (once):  record k1..kN into a graph
+  every step:      CPU: [g.replay()]   GPU: [k1][k2][k3]...[kN]   <- back-to-back,
+                                                                     no per-kernel gaps
 ```
 
 要握住的两个形状：
@@ -127,6 +127,15 @@ BF16 权重 (~14.2 GiB): 430 个 kernel | 计算  15.2 ms | 启动 2.15 ms
 ```
 
 两者同样的 2.15 ms 启动税——但它在 AWQ 模型 5.9 ms 小计算上是 **36%**，在 BF16 模型 15.2 ms 上是 **14%**。把权重量化以求更快，CUDA graph 反而*更*重要，不是更不重要：你缩小了计算，固定启动开销就显得更大。这就是 vLLM 默认捕获图、且它在你会在 4090 上跑的量化、小 batch decode 上最见效的原因。
+
+### 在 vLLM 源码里读它（v0.26.0）
+
+你在 Lab 里拨动的 `enforce_eager` 开关，是 vLLM 里一组真实对象——值得追一遍，好在代码里看见「录一次、用一次提交重放」：
+
+- 模式是 [`vllm/config/compilation.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/compilation.py) 里的 `CUDAGraphMode`：`NONE`、`PIECEWISE`、`FULL`，以及组合 `FULL_AND_PIECEWISE = (FULL, PIECEWISE)`——uniform-decode batch 用 full 图，prefill/混合 batch 用 piecewise。它由 `CompilationConfig.cudagraph_mode` 设定（即 `-cc '{"cudagraph_mode": "..."}'` flag）；`enforce_eager=True` 强制 `NONE`。
+- 运行时，一个 `CUDAGraphWrapper` 为每个模式持有一张已捕获的图，并经 `CudagraphDispatcher` 读取 forward context，为当前的 `BatchDescriptor`（batch 形状 + 模式）决定**重放还是 eager**。捕获发生在 warmup：GPU model runner 的 `capture_model()` 对每个 batch-size 桶跑 dummy forward 并录制它们——正是 §2 里「录 k1..kN 一次」那个框的落地。（设计文档：`docs/design/cuda_graphs.md`。）
+
+所以 §4 模型里的 `graph_ms()`（一次提交）对 `eager_ms()`（$N$ 次提交），恰好就是 `CUDAGraphMode.FULL` 对 `NONE`，而 `--enforce-eager` 就是二者之间那一行开关。
 
 ## 5 · Lab —— 量出启动税，再在 vLLM 里开关它
 
