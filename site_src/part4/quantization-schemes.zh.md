@@ -18,7 +18,7 @@
 
 ## 2 · 心智模型
 
-四个选择，以及常见方法落在哪：
+四个选择，以及常见方法落在哪（一段语言中立的结构化对比，故用 ASCII，遵循 ADR-0005）：
 
 ```text
 粒度  (粗 ─────────────────► 细；  更细 = 更小的 range/scale，更多 scale 存储)
@@ -34,6 +34,19 @@
 
 怎么         PTQ (训练后，± 校准数据)          |   QAT (训练时模拟量化)
              便宜、不重训 —— 推理默认          |   精度最好、昂贵 —— 训练侧
+```
+
+放大看**粒度**——最高杠杆的那个选择——作为一个权重矩阵的空间切分（越细 = 每个 scale 覆盖的范围越小；图内标签保持英文）：
+
+```text
+  per-tensor              per-channel (per row)         per-group (block of ~128)
+  ┌───────────┐           ┌───────────┐                 ┌─────┬─────┐
+  │ s s s s s │           │ a a a a a │  scale a         │ p p │ q q │  scales p,q on row 0
+  │ s s s s s │           │ b b b b b │  scale b         │ r r │ t t │  scales r,t on row 1
+  │ s s s s s │           │ c c c c c │  scale c         │ u u │ v v │  scales u,v on row 2
+  └───────────┘           └───────────┘                 └─────┴─────┘
+  1 scale / matrix        1 scale / output row           1 scale / block   ← INT4 sweet spot
+  outlier ruins all       isolates outlier rows          isolates outlier regions
 ```
 
 两个要抓住的形状：
@@ -149,6 +162,7 @@ for name, note in schemes.items():
 - **为部署上 QAT。** QAT 需要训练流水线、对服务很少值得；PTQ（± 校准）是推理默认。只在 PTQ 在你目标比特下守不住质量时才用 QAT。
 - **以为更细粒度免费。** 更多 scale = 更高有效比特、有时更慢的 kernel。per-group ~128 是常见甜点，而非 per-element。
 - **忘了激活才是难点。** 权重静态、近对称（易）；激活动态、重尾（难）。这个不对称就是为什么 weight-only 量化这么流行、为什么激活量化需要 SmoothQuant 式技巧（#11）。
+- **静态 vs 动态激活 scale —— 一条隐藏的轴。** 除对称性外，一个激活 scale 可以*静态*计算（从校准算一次）或*动态*计算（每次前向重算）。因为激活随输入剧烈摆动，动态缩放通常更能守住精度——vLLM 的 FP8 路径对激活*每次前向按 per-tensor 动态缩放*（无需校准），某些 `W8A8` 流水线更细到*per-token* scale。静态更简单/更快，但假设分布稳定，于是 off-distribution 流量会咬人。并非普适——在看重 kernel 简洁或固定 scale 处静态更优。
 
 ## 7 · 面试连线
 

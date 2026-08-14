@@ -13,7 +13,7 @@ The one framing to carry: **every method is fighting the same enemy from the [ba
 
 ## 2 · Mental model
 
-The six families, placed on the axes you already know:
+The six families, placed on the axes you already know (a language-neutral comparison table, so ASCII; the *selection flow* below is a decision graph, so Mermaid — both per ADR-0005):
 
 ```text
                  W-bits  A-bits  granularity        the trick                       primary win
@@ -26,6 +26,20 @@ The six families, placed on the axes you already know:
 
   weight-only (W4A16): AWQ, GPTQ  ── decode/memory play, activations stay FP16, easy
   weight+activation (W8A8): SmoothQuant, FP8, LLM.int8() ── compute play, must tame activation outliers
+```
+
+Picking one is a decision on your bottleneck:
+
+```mermaid
+flowchart TD
+    Q{"What's the bottleneck?"}
+    Q -->|"decode / memory-bound"| WO["W4A16 weight-only<br/>(dequant → FP16 matmul)"]
+    Q -->|"prefill / compute / large batch"| WA["W8A8 weight+activation<br/>(INT8 / FP8 tensor cores)"]
+    Q -->|"KV-cache pressure<br/>(long ctx / many seqs)"| KV["FP8 KV cache<br/>(orthogonal — stack it)"]
+    WO --> AG["AWQ · GPTQ<br/>(per-group INT4, PTQ)"]
+    WA --> HW{"FP8 tensor cores?<br/>(Hopper / Ada)"}
+    HW -->|"yes"| FP8["FP8 E4M3<br/>(often no calibration)"]
+    HW -->|"no"| INT8["SmoothQuant → INT8<br/>or LLM.int8() (accuracy-safe)"]
 ```
 
 Two shapes to hold:

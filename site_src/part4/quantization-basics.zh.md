@@ -16,17 +16,53 @@
 
 ## 2 · 心智模型
 
-量化把一段连续范围映到一个小整数格点上，再映回来：
+量化把一段连续范围映到一个小整数格点上，再映回来（一张*空间 + 公式*图，故用 SVG 而非 Mermaid，遵循 ADR-0005；图内标签保持英文）：
 
-```text
-FP16 权重（连续）              INT4 格点（16 级）              反量化（回到 FP16）
-  -0.9 ─────────── 3.0          0  1  2 ... 15                 x̂ = scale·(q − zero)
-   实值落在一条线上       ──►   ▏──▏──▏── ... ──▏     ──►      落到最近的格点
-                               └ step = scale ┘                 误差 ≤ scale/2
+<svg viewBox="0 0 720 320" role="img" xmlns="http://www.w3.org/2000/svg" aria-label="The affine quantization map: FP16 weights on a continuous line are rounded to the nearest point on an evenly-spaced INT4 grid of 16 levels (step = scale), then dequantized back to a real value. The reconstruction error per value is at most half a step. The stored form is the integer q plus one (scale, zero_point) per group." style="max-width:100%;height:auto;font-family:inherit">
+  <title>The affine map: continuous weights → INT4 grid → dequantized (RTX 4090, illustrative)</title>
+  <text x="90" y="46" fill="currentColor" font-size="13" font-weight="bold">FP16 weights — continuous</text>
+  <line x1="90" y1="80" x2="630" y2="80" stroke="currentColor" stroke-width="1.4"/>
+  <g fill="currentColor">
+    <circle cx="140" cy="80" r="4.5"/><circle cx="250" cy="80" r="4.5"/>
+    <circle cx="410" cy="80" r="4.5"/><circle cx="600" cy="80" r="4.5"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.6">
+    <line x1="140" y1="84" x2="126" y2="196"/><line x1="250" y1="84" x2="234" y2="196"/>
+    <line x1="410" y1="84" x2="414" y2="196"/><line x1="600" y1="84" x2="594" y2="196"/>
+  </g>
+  <text x="90" y="176" fill="currentColor" font-size="13" font-weight="bold">INT4 grid — 16 evenly-spaced levels</text>
+  <line x1="90" y1="200" x2="630" y2="200" stroke="currentColor" stroke-width="1.4"/>
+  <g stroke="currentColor" stroke-width="1.2">
+    <line x1="90" y1="193" x2="90" y2="207"/><line x1="126" y1="193" x2="126" y2="207"/>
+    <line x1="162" y1="194" x2="162" y2="206"/><line x1="198" y1="193" x2="198" y2="207"/>
+    <line x1="234" y1="194" x2="234" y2="206"/><line x1="270" y1="194" x2="270" y2="206"/>
+    <line x1="306" y1="194" x2="306" y2="206"/><line x1="342" y1="194" x2="342" y2="206"/>
+    <line x1="378" y1="194" x2="378" y2="206"/><line x1="414" y1="193" x2="414" y2="207"/>
+    <line x1="450" y1="194" x2="450" y2="206"/><line x1="486" y1="194" x2="486" y2="206"/>
+    <line x1="522" y1="194" x2="522" y2="206"/><line x1="558" y1="194" x2="558" y2="206"/>
+    <line x1="594" y1="193" x2="594" y2="207"/><line x1="630" y1="193" x2="630" y2="207"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="126" cy="200" r="4.5"/><circle cx="234" cy="200" r="4.5"/>
+    <circle cx="414" cy="200" r="4.5"/><circle cx="594" cy="200" r="4.5"/>
+  </g>
+  <line x1="90" y1="226" x2="126" y2="226" stroke="currentColor" stroke-width="1.4"/>
+  <line x1="90" y1="222" x2="90" y2="230" stroke="currentColor" stroke-width="1.2"/>
+  <line x1="126" y1="222" x2="126" y2="230" stroke="currentColor" stroke-width="1.2"/>
+  <text x="132" y="230" fill="currentColor" font-size="12">step = scale</text>
+  <line x1="234" y1="226" x2="252" y2="226" stroke="currentColor" stroke-width="1.4" stroke-opacity="0.6"/>
+  <text x="258" y="230" fill="currentColor" font-size="12" opacity="0.75">max error ≤ scale/2</text>
+  <text x="198" y="252" fill="currentColor" font-size="11" text-anchor="middle" opacity="0.85">z (real 0)</text>
+  <text x="90" y="270" fill="currentColor" font-size="11" opacity="0.85">q = 0</text>
+  <text x="630" y="270" fill="currentColor" font-size="11" text-anchor="end" opacity="0.85">q = 15</text>
+  <g fill="currentColor" font-size="12.5">
+    <text x="90" y="300">scale = (h − ℓ) / (2<tspan baseline-shift="super" font-size="9">b</tspan> − 1)</text>
+    <text x="300" y="300">x̂ = scale · (q − z)</text>
+    <text x="470" y="300">|x − x̂| ≤ scale/2</text>
+  </g>
+</svg>
 
-存储：整数 q（4 比特）  +  每组一个 (scale, zero_point)      ← 唯一保留的浮点
-读回：x̂ = scale·(q − zero_point)      ← 「反量化」，在 matmul 前于片上完成
-```
+**存储**整数 `q`（4 比特）加每组一个 `(scale, zero_point)`——唯一保留的浮点；**读回** `x̂ = scale·(q − zero_point)`，在 matmul 前于片上完成。
 
 三个要抓住的形状：
 
@@ -159,6 +195,7 @@ for bits in (8, 6, 4, 3, 2):
 
 - **「INT4 权重让运算快 4×」。** 不——weight-only INT4 在 matmul 前反量化回 FP16，所以 FLOPs 不变。这个 4× 是**内存流量**，即加速 *memory-bound decode* 的东西。计算加速需要量化激活（INT8 tensor core），是另一条更难的路。
 - **忽略 outlier。** 误差随*范围*变化；单个大幅值抬高一切共享它的 scale。对带 outlier 的权重/激活做朴素 per-tensor 量化是头号精度杀手——也是 per-channel/group 与 outlier-aware 方法存在的理由。
+- **min-max 不是设定范围的唯一办法——把它 clip 掉。** 精确覆盖 `[min, max]` 会让单个 outlier 替所有人决定 `scale`。改为**裁剪（clip）**范围（百分位或 MSE-最优阈值）会故意*饱和*掉少数极端值，好让大多数值拿到更细的步长——总误差往往低于 min-max。这也是为何基于校准的方法实际上选的是一个*被裁剪*的范围、而非原始极值；min-max 是朴素基线，不是目标。
 - **忘了 scale/zero-point 开销。** 「4-bit」不精确等于 0.5 字节/参数——每组存的 `(scale, zero_point)` 会加一点。粒度越细 ⇒ scale 越多 ⇒ 有效比特越高。在精度之前就已有粒度-vs-大小的权衡。
 - **把量化与低精度训练混了。** 这是对已训练模型做*事后*压缩以供推理（PTQ），不是用低精度训练。目标不同、失败模式也不同（下一课）。
 - **以为更多比特总更安全/必要。** 在 memory-bound decode 上，多余比特是纯代价（更多流量、更慢）换你未必需要的精度。工程问题是保住质量的*最少*比特，而非最多。

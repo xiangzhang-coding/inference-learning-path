@@ -18,7 +18,7 @@ Each is a slider on the same trade-off — **accuracy ↔ size/speed ↔ complex
 
 ## 2 · Mental model
 
-The four choices, and where the common methods land:
+The four choices, and where the common methods land (a language-neutral structured comparison, so ASCII, per ADR-0005):
 
 ```text
 GRANULARITY  (coarse ─────────────────► fine;  finer = smaller range/scale, more scale-storage)
@@ -34,6 +34,19 @@ WHAT TO QUANTIZE   W4A16 / W8A16  (weight-only)   |   W8A8 (weight + activation)
 
 HOW               PTQ (post-training, ± calibration data)   |   QAT (simulate quant while training)
                   cheap, no retrain — inference default      |   best accuracy, expensive — training-side
+```
+
+Zooming in on **granularity** — the highest-leverage choice — as a spatial tiling of a weight matrix (finer = each scale covers a smaller range):
+
+```text
+  per-tensor              per-channel (per row)         per-group (block of ~128)
+  ┌───────────┐           ┌───────────┐                 ┌─────┬─────┐
+  │ s s s s s │           │ a a a a a │  scale a         │ p p │ q q │  scales p,q on row 0
+  │ s s s s s │           │ b b b b b │  scale b         │ r r │ t t │  scales r,t on row 1
+  │ s s s s s │           │ c c c c c │  scale c         │ u u │ v v │  scales u,v on row 2
+  └───────────┘           └───────────┘                 └─────┴─────┘
+  1 scale / matrix        1 scale / output row           1 scale / block   ← INT4 sweet spot
+  outlier ruins all       isolates outlier rows          isolates outlier regions
 ```
 
 Two shapes to hold:
@@ -149,6 +162,7 @@ for name, note in schemes.items():
 - **Reaching for QAT to deploy.** QAT needs the training pipeline and is rarely worth it for serving; PTQ (± calibration) is the inference default. Use QAT only when PTQ can't hold quality at your target bits.
 - **Assuming finer granularity is free.** More scales = higher effective bits and sometimes slower kernels. Per-group ~128 is the usual sweet spot, not per-element.
 - **Forgetting activations are the hard part.** Weights are static and near-symmetric (easy); activations are dynamic and outlier-heavy (hard). That asymmetry is why weight-only quant is so popular and why activation quant needs SmoothQuant-style tricks (#11).
+- **Static vs dynamic activation scales — a hidden axis.** Beyond symmetry, an activation scale can be computed *statically* (once, from calibration) or *dynamically* (recomputed each forward pass). Because activations swing hard with the input, dynamic scaling usually holds accuracy better — vLLM's FP8 path scales activations *dynamically per-tensor* each forward (no calibration), and some `W8A8` pipelines go finer with *per-token* scales. Static is simpler/faster but assumes a stable distribution, so off-distribution traffic bites. Not universal — static wins where kernel simplicity or fixed scales matter.
 
 ## 7 · Interview links
 

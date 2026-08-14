@@ -13,16 +13,15 @@ Part 4 的一切在这里汇合：拿 `Qwen2.5-7B-Instruct`、把它变 INT4、�
 
 ## 2 · 心智模型
 
-端到端路径，以及每个 Part-4 想法插在哪：
+端到端路径，以及每个 Part-4 想法插在哪（一段*流程*，故用 Mermaid，遵循 ADR-0005；图内标签保持英文）：
 
-```text
- [FP16 model]  ──quantize (OFFLINE, once)──►  [INT4 checkpoint]  ──serve──►  [measure]
-  Qwen2.5-7B     llm-compressor:                compressed-tensors            A/B vs FP16:
-  ~15 GB wts     GPTQModifier(W4A16),           ~4–5 GB wts                   • quality: small eval (#3)
-                 calibration set                vLLM auto-detects it            greedy, seed, per-category
-                 (or: grab a prebuilt            (no flag needed)              • speed: vllm bench throughput
-                  Qwen2.5-7B-Instruct-AWQ)                                       output tokens/s
-                                                                              • memory: freed VRAM → more KV
+```mermaid
+flowchart LR
+    FP16["FP16 model<br/>Qwen2.5-7B · ~15 GB wts"] -->|"quantize OFFLINE, once<br/>llm-compressor: GPTQModifier(W4A16) + calibration<br/>(or grab a prebuilt AWQ checkpoint)"| INT4["INT4 checkpoint<br/>compressed-tensors · ~4-5 GB wts<br/>vLLM auto-detects (no flag)"]
+    INT4 -->|"serve"| M["measure — A/B vs FP16"]
+    M --> Q["quality: small eval (#3)<br/>greedy, seed, per-category"]
+    M --> S["speed: vllm bench throughput<br/>output tokens/s"]
+    M --> V["memory: freed VRAM → more KV"]
 ```
 
 两个要抓住的形状：

@@ -13,7 +13,7 @@
 
 ## 2 · 心智模型
 
-六个族，放在你已知的轴上：
+六个族，放在你已知的轴上（一张语言中立的对比表，故用 ASCII；下面的*选择流程*是决策图，故用 Mermaid——都遵循 ADR-0005；图内标签保持英文）：
 
 ```text
                  W-bits  A-bits  granularity        the trick                       primary win
@@ -26,6 +26,20 @@
 
   weight-only (W4A16): AWQ, GPTQ  ── decode/内存打法，激活留 FP16，容易
   weight+activation (W8A8): SmoothQuant, FP8, LLM.int8() ── 计算打法，必须驯服激活 outlier
+```
+
+选哪个，是一道基于瓶颈的决策：
+
+```mermaid
+flowchart TD
+    Q{"What's the bottleneck?"}
+    Q -->|"decode / memory-bound"| WO["W4A16 weight-only<br/>(dequant → FP16 matmul)"]
+    Q -->|"prefill / compute / large batch"| WA["W8A8 weight+activation<br/>(INT8 / FP8 tensor cores)"]
+    Q -->|"KV-cache pressure<br/>(long ctx / many seqs)"| KV["FP8 KV cache<br/>(orthogonal — stack it)"]
+    WO --> AG["AWQ · GPTQ<br/>(per-group INT4, PTQ)"]
+    WA --> HW{"FP8 tensor cores?<br/>(Hopper / Ada)"}
+    HW -->|"yes"| FP8["FP8 E4M3<br/>(often no calibration)"]
+    HW -->|"no"| INT8["SmoothQuant → INT8<br/>or LLM.int8() (accuracy-safe)"]
 ```
 
 两个要抓住的形状：

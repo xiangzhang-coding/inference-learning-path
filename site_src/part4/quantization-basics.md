@@ -16,17 +16,53 @@ The one idea to anchor everything: **quantization trades precision for bandwidth
 
 ## 2 · Mental model
 
-Quantization maps a continuous range onto a small integer grid, and back:
+Quantization maps a continuous range onto a small integer grid, and back (a *spatial + formula* figure, so SVG rather than Mermaid, per ADR-0005):
 
-```text
-FP16 weights (continuous)        INT4 grid (16 levels)          dequantized (back to FP16)
-  -0.9 ─────────── 3.0            0  1  2 ... 15                 x̂ = scale·(q − zero)
-   real values on a line    ──►   ▏──▏──▏── ... ──▏     ──►      lands on the nearest grid point
-                                  └ step = scale ┘                 error ≤ scale/2
+<svg viewBox="0 0 720 320" role="img" xmlns="http://www.w3.org/2000/svg" aria-label="The affine quantization map: FP16 weights on a continuous line are rounded to the nearest point on an evenly-spaced INT4 grid of 16 levels (step = scale), then dequantized back to a real value. The reconstruction error per value is at most half a step. The stored form is the integer q plus one (scale, zero_point) per group." style="max-width:100%;height:auto;font-family:inherit">
+  <title>The affine map: continuous weights → INT4 grid → dequantized (RTX 4090, illustrative)</title>
+  <text x="90" y="46" fill="currentColor" font-size="13" font-weight="bold">FP16 weights — continuous</text>
+  <line x1="90" y1="80" x2="630" y2="80" stroke="currentColor" stroke-width="1.4"/>
+  <g fill="currentColor">
+    <circle cx="140" cy="80" r="4.5"/><circle cx="250" cy="80" r="4.5"/>
+    <circle cx="410" cy="80" r="4.5"/><circle cx="600" cy="80" r="4.5"/>
+  </g>
+  <g stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.6">
+    <line x1="140" y1="84" x2="126" y2="196"/><line x1="250" y1="84" x2="234" y2="196"/>
+    <line x1="410" y1="84" x2="414" y2="196"/><line x1="600" y1="84" x2="594" y2="196"/>
+  </g>
+  <text x="90" y="176" fill="currentColor" font-size="13" font-weight="bold">INT4 grid — 16 evenly-spaced levels</text>
+  <line x1="90" y1="200" x2="630" y2="200" stroke="currentColor" stroke-width="1.4"/>
+  <g stroke="currentColor" stroke-width="1.2">
+    <line x1="90" y1="193" x2="90" y2="207"/><line x1="126" y1="193" x2="126" y2="207"/>
+    <line x1="162" y1="194" x2="162" y2="206"/><line x1="198" y1="193" x2="198" y2="207"/>
+    <line x1="234" y1="194" x2="234" y2="206"/><line x1="270" y1="194" x2="270" y2="206"/>
+    <line x1="306" y1="194" x2="306" y2="206"/><line x1="342" y1="194" x2="342" y2="206"/>
+    <line x1="378" y1="194" x2="378" y2="206"/><line x1="414" y1="193" x2="414" y2="207"/>
+    <line x1="450" y1="194" x2="450" y2="206"/><line x1="486" y1="194" x2="486" y2="206"/>
+    <line x1="522" y1="194" x2="522" y2="206"/><line x1="558" y1="194" x2="558" y2="206"/>
+    <line x1="594" y1="193" x2="594" y2="207"/><line x1="630" y1="193" x2="630" y2="207"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="126" cy="200" r="4.5"/><circle cx="234" cy="200" r="4.5"/>
+    <circle cx="414" cy="200" r="4.5"/><circle cx="594" cy="200" r="4.5"/>
+  </g>
+  <line x1="90" y1="226" x2="126" y2="226" stroke="currentColor" stroke-width="1.4"/>
+  <line x1="90" y1="222" x2="90" y2="230" stroke="currentColor" stroke-width="1.2"/>
+  <line x1="126" y1="222" x2="126" y2="230" stroke="currentColor" stroke-width="1.2"/>
+  <text x="132" y="230" fill="currentColor" font-size="12">step = scale</text>
+  <line x1="234" y1="226" x2="252" y2="226" stroke="currentColor" stroke-width="1.4" stroke-opacity="0.6"/>
+  <text x="258" y="230" fill="currentColor" font-size="12" opacity="0.75">max error ≤ scale/2</text>
+  <text x="198" y="252" fill="currentColor" font-size="11" text-anchor="middle" opacity="0.85">z (real 0)</text>
+  <text x="90" y="270" fill="currentColor" font-size="11" opacity="0.85">q = 0</text>
+  <text x="630" y="270" fill="currentColor" font-size="11" text-anchor="end" opacity="0.85">q = 15</text>
+  <g fill="currentColor" font-size="12.5">
+    <text x="90" y="300">scale = (h − ℓ) / (2<tspan baseline-shift="super" font-size="9">b</tspan> − 1)</text>
+    <text x="300" y="300">x̂ = scale · (q − z)</text>
+    <text x="470" y="300">|x − x̂| ≤ scale/2</text>
+  </g>
+</svg>
 
-STORE: the int q (4 bits)  +  one (scale, zero_point) per group   ← the only floats kept
-READ back: x̂ = scale·(q − zero_point)      ← "dequantize", done on-chip before the matmul
-```
+**Store** the integer `q` (4 bits) plus one `(scale, zero_point)` per group — the only floats kept; **read back** `x̂ = scale·(q − zero_point)` on-chip, just before the matmul.
 
 Three shapes to hold:
 
@@ -159,6 +195,7 @@ for bits in (8, 6, 4, 3, 2):
 
 - **"INT4 weights make the math 4× faster."** No — weight-only INT4 dequantizes to FP16 before the matmul, so FLOPs are unchanged. The 4× is **memory traffic**, which is what speeds up *memory-bound decode*. Compute speedups need quantized activations (INT8 tensor cores), a different and harder path.
 - **Ignoring outliers.** Error scales with the *range*; one large-magnitude value inflates `scale` for everything sharing it. Naive per-tensor quantization of weights/activations with outliers is the #1 accuracy killer — and the reason for per-channel/group and outlier-aware methods.
+- **Min-max isn't the only way to pick the range — clip it.** Spanning the exact `[min, max]` lets a single outlier dictate `scale` for everyone. **Clipping** the range instead (percentile or MSE-optimal thresholds) deliberately *saturates* a few extreme values so the bulk get a finer step — often lower total error than min-max. This is why calibration-based methods effectively choose a *clipped* range, not the raw extremes; min-max is the naive baseline, not the goal.
 - **Forgetting the scale/zero-point overhead.** "4-bit" isn't exactly 0.5 byte/param — the stored `(scale, zero_point)` per group add a little. Finer granularity ⇒ more scales ⇒ higher effective bits. There's a granularity-vs-size trade even before accuracy.
 - **Confusing quantization with low-precision training.** This is *post-hoc* compression of a trained model for inference (PTQ), not training in low precision. Different goal, different failure modes (next lesson).
 - **Assuming more bits is always safer/needed.** On memory-bound decode, extra bits are pure cost (more traffic, slower) for accuracy you may not need. The engineering question is the *minimum* bits that hold quality, not the maximum.
