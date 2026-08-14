@@ -35,6 +35,22 @@ schema → 自动机 → 每步 token 掩码 → 只从被允许的里采样：
       具体是哪个合法值（positive vs negative、0.9 vs 0.1）仍由模型决定。
 ```
 
+上面那段算术（$-\infty$ 掩码）是空间草图，故按 ADR-0005 用 ASCII。而「编译一次、再逐步掩码」的*控制流*是一条流程，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    SCHEMA["schema / regex / grammar / enum"] -->|"compile ONCE"| FSM["finite-state machine<br/>+ per-state token cache"]
+    FSM --> S["at FSM state s (each decode step)"]
+    S --> LOG["model logits over full vocab"]
+    S --> MASK["fill token bitmask at s:<br/>allowed = 1, forbidden = 0"]
+    LOG --> APPLY["apply bitmask: forbidden logits -> -inf"]
+    MASK --> APPLY
+    APPLY --> SAMPLE["softmax + sample<br/>(forbidden prob = 0 at any temperature)"]
+    SAMPLE --> ADV["advance FSM: s -> delta(s, token)"]
+    ADV -->|"grammar not terminated"| S
+    ADV -->|"terminated"| DONE["output valid by construction"]
+```
+
 三个要记住的形状：
 
 - **约束作用在 logits 上，而非事后作用在文本上。** 没有「先生成、再校验、再重试」——非法 token 在采样*之前*、每一步就被移除。这就是为什么保证是硬的，而非统计意义上的。
@@ -84,6 +100,16 @@ vLLM 通过 `StructuredOutputsParams`（离线）/ `structured_outputs` 请求�
 
 !!! warning "API 改名——别用旧字段"
     旧的 `guided_json` / `guided_regex` / `guided_choice` / `guided_grammar` 字段已在 vLLM 0.12.0 **弃用并移除**。在 0.26.0 基线上你**必须**用 `structured_outputs`（在线）/ `StructuredOutputsParams`（离线）。面试与读源码提示：看到 `guided_*` 就说明这代码早于 0.12.0。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+§3.1 的掩码 $m^{(s)}$ 在 V1 代码里是个真实对象（ADR-0002：读懂 + 会推，不重写）：
+
+- **请求字段**是 [`vllm/sampling_params.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/sampling_params.py) 里的 **`StructuredOutputsParams`**——带 §3.3 的 `json` / `regex` / `choice` / `grammar` / `structural_tag` 字段的 dataclass。
+- **每步掩码**由 [`vllm/v1/structured_output/__init__.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/__init__.py) 里的 **`StructuredOutputManager.grammar_bitmask()`** 构造：它遍历整个 batch，为每个受约束请求填充它在共享 bitmask 缓冲里的那一段。真正的逐状态填充是 [`vllm/v1/structured_output/backend_xgrammar.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/backend_xgrammar.py) 里的 **`XgrammarGrammar.fill_next_token_bitmask`**，底层由 `xgr.allocate_token_bitmask` 支撑——一个形状为 `(max_num_seqs, ⌈vocab/32⌉)` 的**紧凑 bitmask**，*而非*逐状态的稠密数组。施加它就是把被禁 logits 设为 $-\infty$——正是 §3.1 的 $z_i + \log m^{(s)}_i$，落成一次 bit 测试。
+- **后端选择**在 **`StructuredOutputsConfig`**（[`vllm/config/structured_outputs.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/structured_outputs.py)）上：`backend="auto"` 解析为 `xgrammar`（`guidance` 为可选），对应 §5 的 `--structured-outputs-config.backend` flag。
+
+先打开 `backend_xgrammar.py`：`fill_next_token_bitmask` → 施加到 logits，就是「先掩码再采样」整套思路，一个方法内看全。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -210,6 +236,7 @@ print(resp.choices[0].message.content)   # 恰好是 "positive" 或 "negative"
 - **忘了冷 schema 的编译代价。** 一个从未见过的巨大文法会付一次性编译，可能让首 token 延迟飙一下。复用 schema 让编译摊销；别为每个请求造一个独一无二的巨型 schema。
 - **正则风味的意外。** 后端的正则引擎（xgrammar/guidance 是 Rust 风格）与 Python 的 `re` 不完全一致。花哨的 lookaround 或反向引用可能不支持——拿你的模式对着真实后端测。
 - **无界数字/字符串不能干净收尾。** 一个无界 `number` 或贪心字符串可能让生成一路跑到 `max_tokens` 而不闭合对象。约束范围/长度，靠 schema 的结构逼出闭合 token。
+- **以为掩码纯在 GPU、且永远免费。** 这个 bitmask 是语法引擎*每步在 host 上填*的（`XgrammarGrammar.fill_next_token_bitmask`，`backend_xgrammar.py`）——当多数 token 在编译期就定了时近乎免费，但一个带大量**上下文相关** token 的文法（深递归、巨型选择分支）会逼出每步的栈/PDA 检查，可能成为 CPU 侧瓶颈、反过来让 GPU 等它。「近乎零开销」是常见情形，不是保证——对复杂文法要实测，别假设它没代价。
 
 ## 7 · 面试连线
 
@@ -224,6 +251,7 @@ print(resp.choices[0].message.content)   # 恰好是 "positive" 或 "negative"
 - vLLM `docs/features/structured_outputs.md` — 这里引用的 `StructuredOutputsParams` 选项、`response_format`、与 `--structured-outputs-config.backend` flag。
 - **xgrammar** — 默认后端；其逐状态 token 掩码预计算正是让掩码近乎免费的东西。
 - **Outlines** / **Guidance** — 更广的受约束生成生态，以及 FSM/正则到掩码的思路。
+- vLLM 源码（v0.26.0）：[`vllm/sampling_params.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/sampling_params.py)（`StructuredOutputsParams`）、[`vllm/v1/structured_output/__init__.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/__init__.py)（`StructuredOutputManager.grammar_bitmask`）、[`vllm/v1/structured_output/backend_xgrammar.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/backend_xgrammar.py)（`XgrammarGrammar.fill_next_token_bitmask`）——§3.4 的 schema→bitmask→logits 代码。
 - [continuous batching 课](../part5/continuous-batching.md) — structured decoding 跑在每个序列的 decode 步*内部*，因此它与 Part 5 的一切组合。
 
 ## 9 · 自测小问

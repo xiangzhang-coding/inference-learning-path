@@ -38,6 +38,21 @@ Per layer, per row i:   y_i = W x_i  +  (B_{a(i)} A_{a(i)}) x_i · (α/r)
                               └ shared ┘   └ this row's adapter a(i) ┘
 ```
 
+The VRAM layout above is a spatial sketch (ASCII, per ADR-0005). The *serving trick* itself is a data-flow — one batched forward where rows carry different adapter ids but share the base GEMM — so it's a Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    R0["row 0 · lora_id = sql"] --> G
+    R1["row 1 · lora_id = support"] --> G
+    R2["row 2 · lora_id = none (base)"] --> G
+    G["group rows by adapter id<br/>(one continuous batch)"] --> BASE["shared base GEMM: y = W·x<br/>run ONCE for the whole batch"]
+    G --> SH["add_shrink: v = A·x<br/>rank-r, grouped per adapter"]
+    SH --> EX["add_expand: delta = B·v · (alpha/r)<br/>grouped per adapter (SGMV / BGMV)"]
+    BASE --> M["merge per row: y_i = base_i + delta_i"]
+    EX --> M
+    M --> OUT["one forward pass, many adapters"]
+```
+
 Three shapes to hold:
 
 - **The base is shared; the adapter is the per-request delta.** The expensive weights ($W$) are computed once for the whole batch; each row adds only its own small $BA$ correction. That's why heterogeneous batching is cheap — you're not re-running the model per adapter.
@@ -77,6 +92,16 @@ Two engine knobs size this:
 ### 3.3 Static vs dynamic loading
 
 Adapters can be declared **at startup** (`--lora-modules name=path …`) or added/removed **at runtime**. Runtime updating is gated behind `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` and exposed as `POST /v1/load_lora_adapter` (and an unload endpoint). The vLLM docs flag this as a security-sensitive feature — loading an adapter from an arbitrary path is code/data you're trusting — so it's "for isolated and fully trusted production environments" only. Once loaded, a client selects an adapter simply by putting its **name in the `model` field** of an OpenAI-style request.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+The "shared base + per-row delta" story maps directly to code (ADR-0002: read + reason, don't rewrite):
+
+- **The request tag** is **`LoRARequest`** in [`vllm/lora/request.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/request.py) — the `(lora_name, lora_int_id, lora_path)` triple from §4. The **integer id** is the key vLLM groups rows by inside a batch.
+- **The delta application** is where §3.1's $B(Ax)$ becomes two grouped GEMMs. `BaseLinearLayerWithLoRA._apply_lora_to_output` in [`vllm/lora/layers/base_linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/layers/base_linear.py) calls `self.punica_wrapper.add_lora_linear(...)`; that lands in **`PunicaWrapperGPU`** ([`vllm/lora/punica_wrapper/punica_gpu.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/punica_wrapper/punica_gpu.py)), whose `add_lora_linear` runs **`add_shrink`** (the rank-$r$ $v = Ax$) then **`add_expand`** (the $B v$) — each *grouped by adapter* so one call serves the whole heterogeneous batch. That grouping **is** the SGMV/BGMV kernel of §3.2; there is no per-adapter Python loop.
+- **The knobs** are dataclass fields on **`LoRAConfig`** ([`vllm/config/lora.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/lora.py)): `max_lora_rank` (default `16`), `max_loras` (default `1`), `max_cpu_loras`. `LoRAModelManager.max_loras` ([`vllm/lora/model_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/model_manager.py)) just returns `self.lora_config.max_loras` — the §3.2 cap on distinct adapters per step.
+
+Open `punica_gpu.py` first: `add_shrink` → `add_expand` is the whole "$W$ once, tiny $BA$ per row" idea in ~30 lines.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -186,6 +211,7 @@ curl http://localhost:8000/v1/load_lora_adapter -H "Content-Type: application/js
 - **Assuming a LoRA is as good as a full fine-tune.** Low rank is a *capacity* limit; for tasks that need to move the model a lot, a rank-8 adapter may underperform a full fine-tune. Rank is a quality/size dial, not free.
 - **Merging when you should keep it runtime (and vice versa).** You *can* merge an adapter into the base weights for a single dedicated model (zero per-request delta cost) — but then you've given up multi-tenancy. Keep adapters runtime precisely when you want *many* on one base; merge only when you'll serve exactly one.
 - **Leaving runtime loading open.** `VLLM_ALLOW_RUNTIME_LORA_UPDATING` lets any caller load weights from a path — treat it as privileged. Don't expose `/v1/load_lora_adapter` to untrusted clients; the vLLM docs restrict it to fully trusted environments.
+- **Forgetting `max_loras` defaults to 1.** In `LoRAConfig` (`vllm/config/lora.py`) `max_loras` is `Field(default=1)` — so if you enable LoRA but never set it, **only one adapter is active per step** and your "heterogeneous batch" silently serializes: rows for other adapters wait their turn instead of co-running. The whole §2 trick needs `max_loras ≥` the number of distinct adapters you want in one batch. Trust the dataclass default, not your memory of it.
 
 ## 7 · Interview links
 
@@ -200,6 +226,7 @@ Further reading:
 - vLLM `docs/features/lora.md` — the `--enable-lora` / `--lora-modules` / `--max-lora-rank` flags and the dynamic-loading endpoints quoted here.
 - *LoRA: Low-Rank Adaptation of Large Language Models* (Hu et al., 2021) — the $\Delta W = BA$ formulation and the rank/quality trade.
 - *S-LoRA* and *Punica* — the segmented/grouped GEMM (SGMV/BGMV) kernels that make heterogeneous-adapter batching cheap.
+- vLLM source (v0.26.0): [`vllm/lora/punica_wrapper/punica_gpu.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/punica_wrapper/punica_gpu.py) (`PunicaWrapperGPU.add_shrink`/`add_expand`), [`vllm/lora/layers/base_linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/layers/base_linear.py) (`_apply_lora_to_output`), [`vllm/lora/request.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/request.py) (`LoRARequest`), [`vllm/config/lora.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/lora.py) (`LoRAConfig`) — the grouped-GEMM + config code from §3.4.
 - The [PagedAttention lesson](../part5/paged-attention.md) — the block pool whose free VRAM you're now sharing between KV cache and adapter slots.
 
 ## 9 · Self-check

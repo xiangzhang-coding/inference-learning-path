@@ -35,6 +35,22 @@ RESULT: every sampled token keeps the output on a path the grammar accepts →
         WHICH valid value (positive vs negative, 0.9 vs 0.1) is still the model's call.
 ```
 
+The arithmetic above (the $-\infty$ masking) is a spatial sketch, so ASCII per ADR-0005. The compile-once-then-mask-every-step *control flow* is a process, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    SCHEMA["schema / regex / grammar / enum"] -->|"compile ONCE"| FSM["finite-state machine<br/>+ per-state token cache"]
+    FSM --> S["at FSM state s (each decode step)"]
+    S --> LOG["model logits over full vocab"]
+    S --> MASK["fill token bitmask at s:<br/>allowed = 1, forbidden = 0"]
+    LOG --> APPLY["apply bitmask: forbidden logits -> -inf"]
+    MASK --> APPLY
+    APPLY --> SAMPLE["softmax + sample<br/>(forbidden prob = 0 at any temperature)"]
+    SAMPLE --> ADV["advance FSM: s -> delta(s, token)"]
+    ADV -->|"grammar not terminated"| S
+    ADV -->|"terminated"| DONE["output valid by construction"]
+```
+
 Three shapes to hold:
 
 - **The constraint acts on logits, not on text after the fact.** There's no "generate then validate then retry" — invalid tokens are removed *before* sampling, every step. That's why the guarantee is hard, not statistical.
@@ -84,6 +100,16 @@ vLLM exposes structured outputs through `StructuredOutputsParams` (offline) / th
 
 !!! warning "API rename — don't use the old fields"
     The older `guided_json` / `guided_regex` / `guided_choice` / `guided_grammar` fields were **deprecated and removed in vLLM 0.12.0**. On the 0.26.0 baseline you **must** use `structured_outputs` (online) / `StructuredOutputsParams` (offline). Interview and code-reading tip: seeing `guided_*` means the code predates 0.12.0.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+§3.1's mask $m^{(s)}$ is a real object in the V1 code (ADR-0002: read + reason, don't rewrite):
+
+- **The request field** is **`StructuredOutputsParams`** in [`vllm/sampling_params.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/sampling_params.py) — the dataclass with `json` / `regex` / `choice` / `grammar` / `structural_tag` fields from §3.3.
+- **The per-step mask** is built by **`StructuredOutputManager.grammar_bitmask()`** in [`vllm/v1/structured_output/__init__.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/__init__.py): it walks the batch and, for each constrained request, fills that request's slice of a shared bitmask buffer. The actual per-state fill is **`XgrammarGrammar.fill_next_token_bitmask`** in [`vllm/v1/structured_output/backend_xgrammar.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/backend_xgrammar.py), backed by `xgr.allocate_token_bitmask` — a **compact bitmask** of shape `(max_num_seqs, ⌈vocab/32⌉)`, *not* a dense per-state array. Applying it sets forbidden logits to $-\infty$ — exactly §3.1's $z_i + \log m^{(s)}_i$, realized as a bit test.
+- **The backend choice** lives on **`StructuredOutputsConfig`** ([`vllm/config/structured_outputs.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/structured_outputs.py)): `backend="auto"` resolves to `xgrammar` (with `guidance` the alternative), matching the `--structured-outputs-config.backend` flag in §5.
+
+Open `backend_xgrammar.py` first — `fill_next_token_bitmask` → apply-to-logits is the whole "mask then sample" idea in one method.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -210,6 +236,7 @@ print(resp.choices[0].message.content)   # exactly "positive" or "negative"
 - **Forgetting the compile cost on cold schemas.** A huge, never-seen grammar pays a one-time compile that can spike first-token latency. Reuse schemas so the compile amortizes; don't generate a unique giant schema per request.
 - **Regex-flavor surprises.** The backend's regex engine (Rust-style for xgrammar/guidance) isn't identical to Python's `re`. Fancy lookarounds or backreferences may be unsupported — test your pattern against the actual backend.
 - **Unbounded numbers/strings that don't terminate cleanly.** A `number` with no bound or a greedy string can let generation run to `max_tokens` instead of closing the object. Constrain ranges/lengths and rely on the schema's structure to force the closing tokens.
+- **Assuming the mask is pure-GPU and always free.** The bitmask is *filled on the host each step* by the grammar engine (`XgrammarGrammar.fill_next_token_bitmask`, `backend_xgrammar.py`) — near-free when most tokens are decided at compile time, but a grammar with many **context-dependent** tokens (deep recursion, huge alternations) forces per-step stack/PDA checks that can become a CPU-side bottleneck the GPU then waits on. "Near-zero overhead" is the common case, not a guarantee — profile a complex grammar rather than assuming it's costless.
 
 ## 7 · Interview links
 
@@ -224,6 +251,7 @@ Further reading:
 - vLLM `docs/features/structured_outputs.md` — the `StructuredOutputsParams` options, `response_format`, and `--structured-outputs-config.backend` flag quoted here.
 - **xgrammar** — the default backend; its per-state token-mask precomputation is what keeps masking near-free.
 - **Outlines** / **Guidance** — the broader constrained-generation ecosystem and the FSM/regex-to-mask idea.
+- vLLM source (v0.26.0): [`vllm/sampling_params.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/sampling_params.py) (`StructuredOutputsParams`), [`vllm/v1/structured_output/__init__.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/__init__.py) (`StructuredOutputManager.grammar_bitmask`), [`vllm/v1/structured_output/backend_xgrammar.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/structured_output/backend_xgrammar.py) (`XgrammarGrammar.fill_next_token_bitmask`) — the schema→bitmask→logits code from §3.4.
 - The [continuous batching lesson](../part5/continuous-batching.md) — structured decoding runs *inside* each sequence's decode step, so it composes with everything in Part 5.
 
 ## 9 · Self-check

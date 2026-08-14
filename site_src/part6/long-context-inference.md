@@ -41,6 +41,24 @@ ATTENTION SINK (why naive sliding windows crash):
   drop the sinks ──► quality collapses (the model has nowhere to dump attention)
 ```
 
+The KV-wall bars above are quantitative, so ASCII per ADR-0005. The *two-axis lever selection* is a decision topology, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    REQ["long-context request (e.g. 128k tokens)"] --> AX1
+    REQ --> AX2
+    subgraph AX1["Axis 1 · COHERENCE (positions)"]
+      Q1{"prompt longer than training length?"} -->|"yes"| YARN["RoPE scaling: YaRN<br/>rescale angles in-distribution"]
+      Q1 -->|"no"| OK1["positions already in range"]
+    end
+    subgraph AX2["Axis 2 · CAPACITY (memory)"]
+      Q2{"KV fits and leaves room for others?"} -->|"no"| LEV["fp8 KV · GQA · sliding window<br/>chunked prefill (scheduling)"]
+      Q2 -->|"yes"| OK2["KV fits the block pool"]
+    end
+    AX1 --> SHIP["ship only if BOTH: coherent AND fits/schedules"]
+    AX2 --> SHIP
+```
+
 Three shapes to hold:
 
 - **Coherence and capacity are orthogonal.** RoPE scaling makes the model *understand* position 100K; it does *nothing* for the memory that 100K tokens of KV costs. fp8 KV makes it *fit*; it does nothing for whether the model *understands* the position. You almost always need both.
@@ -95,6 +113,17 @@ The only length-dependent factor is `seq_len`, and it's **linear** — 128K toke
 - **GQA** (fewer $H_\text{kv}$, from the [attention-variants](../interview/attention-variants.md) material) — the architectural cut that made long context affordable in the first place.
 - **Sliding window** (cap effective `seq_len`) — §3.2, for streaming workloads.
 - **[Chunked prefill](../part5/scheduler-chunked-prefill-pd.md)** — the *scheduling* lever. A 128K prefill is a giant compute block that would freeze every ongoing decode; chunked prefill (on by default) slices it against the `max_num_batched_tokens` budget so decodes keep flowing. `long_prefill_token_threshold` marks when a prefill counts as "long."
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+Both axes are concrete code (ADR-0002: read + reason, don't rewrite):
+
+- **Coherence — YaRN.** `get_rope()` in [`vllm/model_executor/layers/rotary_embedding/__init__.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/rotary_embedding/__init__.py) branches on `rope_type`; `scaling_type == "yarn"` constructs **`YaRNScalingRotaryEmbedding`** ([`yarn_scaling_rope.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/rotary_embedding/yarn_scaling_rope.py)), whose `mscale` (the attention-temperature tweak) and `yarn_find_correction_range` / `yarn_linear_ramp_mask` (from `common.py`) *are* §3.1's per-frequency interpolation.
+- **Capacity — fp8 KV.** The `kv_cache_dtype` you pass lands on **`CacheConfig.cache_dtype`** ([`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)); the `CacheDType` literal there enumerates the exact values from the callout — `"fp8"` (= `fp8_e4m3`), `"fp8_e5m2"`, etc.
+- **Capacity — sliding window (hybrid pool).** [`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py) has both **`FullAttentionManager`** and **`SlidingWindowManager`**: the windowed one reserves blocks only for the recent window, so the pool stays bounded no matter how long the stream runs (§3.2).
+- **Capacity — chunked prefill (scheduling).** `Scheduler.schedule` in [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py) slices a long prefill with `if 0 < long_prefill_token_threshold < num_new_tokens: num_new_tokens = long_prefill_token_threshold` then `num_new_tokens = min(num_new_tokens, token_budget)` — the exact "don't let one 128K prefill freeze every decode" cut. `enable_chunked_prefill` defaults to `True` on **`SchedulerConfig`** ([`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)).
+
+Open `scheduler.py`'s `schedule` first — those two `num_new_tokens` lines are the whole "slice the giant prefill against a token budget" idea.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -186,6 +215,7 @@ print(llm.generate(long_prompt, SamplingParams(max_tokens=128))[0].outputs[0].te
 - **Enabling fp8 KV and expecting free accuracy.** fp8 KV "may cause accuracy drop without a proper scaling factor" — use `calculate_kv_scales` / a calibrated scale, and validate on your task, especially at long context where errors compound over more tokens.
 - **Letting one long request freeze the server.** A 128K prefill is a giant compute block; without [chunked prefill](../part5/scheduler-chunked-prefill-pd.md) (on by default) it stalls every decode. Keep chunked prefill on and tune `max_num_batched_tokens`.
 - **Trusting "supports 1M tokens" as "reasons over 1M tokens."** Advertised context ≠ effective context. Passing a needle-in-haystack test isn't the same as multi-hop reasoning across the whole window; benchmark your actual task.
+- **Assuming `long_prefill_token_threshold` is on by default.** In `SchedulerConfig` (`vllm/config/scheduler.py`) it's `Field(default=0)`, and the scheduler's guard is `if 0 < long_prefill_token_threshold < num_new_tokens` (`scheduler.py`) — so at the default **0 it's disabled**. Chunked prefill still slices against `max_num_batched_tokens` (that's `enable_chunked_prefill=True`), but the *explicit* per-step long-prefill cap does nothing until you set a positive value. If one giant prefill is still starving decodes, set this threshold — don't assume the default already caps it.
 
 ## 7 · Interview links
 
@@ -202,6 +232,7 @@ Further reading:
 - *StreamingLLM* (Xiao et al., 2023) — the attention-sink phenomenon and sink + sliding-window streaming.
 - vLLM `docs/features/context_extension.md` and `docs/features/quantization/quantized_kvcache.md` — the `--hf-overrides`/`rope_parameters` and `kv_cache_dtype` mechanics quoted here.
 - The [KV-cache math lesson](../part2/kv-cache-math.md) and [PagedAttention lesson](../part5/paged-attention.md) — the memory formula and block pool the capacity wall pushes on.
+- vLLM source (v0.26.0): [`rotary_embedding/yarn_scaling_rope.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/rotary_embedding/yarn_scaling_rope.py) (`YaRNScalingRotaryEmbedding`), [`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py) (`CacheConfig.cache_dtype`), [`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py) (`SlidingWindowManager`), [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py) (`Scheduler.schedule`) — the YaRN / fp8 / sliding-window / chunked-prefill code from §3.4.
 
 ## 9 · Self-check
 

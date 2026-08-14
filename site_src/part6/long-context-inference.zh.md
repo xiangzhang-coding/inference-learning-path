@@ -41,6 +41,24 @@ ATTENTION SINK（为何朴素滑动窗口会崩）：
   丢掉 sink ──► 质量崩（模型没地方倾倒注意力）
 ```
 
+上面的 KV 墙柱状图是定量图，故按 ADR-0005 用 ASCII。而*两轴杠杆选择*是一张决策拓扑，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    REQ["long-context request (e.g. 128k tokens)"] --> AX1
+    REQ --> AX2
+    subgraph AX1["Axis 1 · COHERENCE (positions)"]
+      Q1{"prompt longer than training length?"} -->|"yes"| YARN["RoPE scaling: YaRN<br/>rescale angles in-distribution"]
+      Q1 -->|"no"| OK1["positions already in range"]
+    end
+    subgraph AX2["Axis 2 · CAPACITY (memory)"]
+      Q2{"KV fits and leaves room for others?"} -->|"no"| LEV["fp8 KV · GQA · sliding window<br/>chunked prefill (scheduling)"]
+      Q2 -->|"yes"| OK2["KV fits the block pool"]
+    end
+    AX1 --> SHIP["ship only if BOTH: coherent AND fits/schedules"]
+    AX2 --> SHIP
+```
+
 三个要记住的形状：
 
 - **连贯与容量正交。** RoPE 缩放让模型*理解*位置 100K；它对 100K token KV 的*显存*毫无帮助。fp8 KV 让它*装得下*；它对模型*是否理解*那个位置毫无帮助。你几乎总是两者都要。
@@ -95,6 +113,17 @@ $$
 - **GQA**（更少 $H_\text{kv}$，见[注意力变体](../interview/attention-variants.md)材料）——一开始就让长上下文可负担的架构性削减。
 - **滑动窗口**（限住有效 `seq_len`）——§3.2，用于流式负载。
 - **[Chunked prefill](../part5/scheduler-chunked-prefill-pd.md)**——*调度*杠杆。128K prefill 是一大块计算，会冻住每个进行中的 decode；chunked prefill（默认开）把它对着 `max_num_batched_tokens` 预算切块，让 decode 持续流动。`long_prefill_token_threshold` 标记一个 prefill 何时算「长」。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+两条轴都是具体代码（ADR-0002：读懂 + 会推，不重写）：
+
+- **连贯 —— YaRN。** [`vllm/model_executor/layers/rotary_embedding/__init__.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/rotary_embedding/__init__.py) 里的 `get_rope()` 按 `rope_type` 分支；`scaling_type == "yarn"` 构造 **`YaRNScalingRotaryEmbedding`**（[`yarn_scaling_rope.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/rotary_embedding/yarn_scaling_rope.py)），其 `mscale`（注意力温度微调）与 `yarn_find_correction_range` / `yarn_linear_ramp_mask`（来自 `common.py`）*就是* §3.1 的逐频率插值。
+- **容量 —— fp8 KV。** 你传的 `kv_cache_dtype` 落在 **`CacheConfig.cache_dtype`**（[`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)）上；那里的 `CacheDType` 字面量枚举了 callout 里的确切值——`"fp8"`（= `fp8_e4m3`）、`"fp8_e5m2"` 等。
+- **容量 —— 滑动窗口（混合池）。** [`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py) 同时有 **`FullAttentionManager`** 与 **`SlidingWindowManager`**：带窗口的那个只为近期窗口预留 block，所以无论流多长池都保持有界（§3.2）。
+- **容量 —— chunked prefill（调度）。** [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py) 里的 `Scheduler.schedule` 用 `if 0 < long_prefill_token_threshold < num_new_tokens: num_new_tokens = long_prefill_token_threshold` 再 `num_new_tokens = min(num_new_tokens, token_budget)` 切分长 prefill——正是「别让一个 128K prefill 冻住每个 decode」那一刀。`enable_chunked_prefill` 在 **`SchedulerConfig`**（[`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)）上默认 `True`。
+
+先打开 `scheduler.py` 的 `schedule`：那两行 `num_new_tokens` 就是「把巨型 prefill 按 token 预算切片」整套思路。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -186,6 +215,7 @@ print(llm.generate(long_prompt, SamplingParams(max_tokens=128))[0].outputs[0].te
 - **开 fp8 KV 却指望精度白给。** fp8 KV「无适当缩放因子时可能掉精度」——用 `calculate_kv_scales` / 校准过的 scale，并在你的任务上验证，尤其长上下文误差会随更多 token 累积。
 - **让一个长请求冻住整台服务。** 128K prefill 是一大块计算；没有 [chunked prefill](../part5/scheduler-chunked-prefill-pd.md)（默认开）它会拖停每个 decode。保持 chunked prefill 开着并调 `max_num_batched_tokens`。
 - **把「支持 1M token」当成「能在 1M token 上推理」。** 标称上下文 ≠ 有效上下文。通过大海捞针不等于跨整窗多跳推理；用你的真实任务基准。
+- **以为 `long_prefill_token_threshold` 默认是开的。** 在 `SchedulerConfig`（`vllm/config/scheduler.py`）里它是 `Field(default=0)`，而调度器的守卫是 `if 0 < long_prefill_token_threshold < num_new_tokens`（`scheduler.py`）——所以在默认值 **0 时它是关的**。chunked prefill 仍按 `max_num_batched_tokens` 切分（那是 `enable_chunked_prefill=True`），但*显式*的每步长-prefill 上限在你设成正值之前什么都不做。若一个巨型 prefill 仍在饿死 decode，就设这个 threshold——别以为默认值已经帮你封顶了。
 
 ## 7 · 面试连线
 
@@ -202,6 +232,7 @@ print(llm.generate(long_prompt, SamplingParams(max_tokens=128))[0].outputs[0].te
 - *StreamingLLM*（Xiao 等，2023）— attention-sink 现象与 sink + 滑动窗口流式。
 - vLLM `docs/features/context_extension.md` 与 `docs/features/quantization/quantized_kvcache.md` — 这里引用的 `--hf-overrides`/`rope_parameters` 与 `kv_cache_dtype` 机制。
 - [KV 缓存数学课](../part2/kv-cache-math.md)与 [PagedAttention 课](../part5/paged-attention.md) — 容量墙压上来的显存公式与 block 池。
+- vLLM 源码（v0.26.0）：[`rotary_embedding/yarn_scaling_rope.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/rotary_embedding/yarn_scaling_rope.py)（`YaRNScalingRotaryEmbedding`）、[`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)（`CacheConfig.cache_dtype`）、[`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py)（`SlidingWindowManager`）、[`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py)（`Scheduler.schedule`）——§3.4 的 YaRN / fp8 / 滑动窗口 / chunked-prefill 代码。
 
 ## 9 · 自测小问
 

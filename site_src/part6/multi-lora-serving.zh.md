@@ -38,6 +38,21 @@
                       └ 共享 ┘   └ 本行 adapter a(i) ┘
 ```
 
+上面的显存布局是空间草图（ASCII，按 ADR-0005）。*服务化诀窍*本身是一条数据流——一次 batched 前向里各行带不同 adapter id 却共享基座 GEMM——所以用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    R0["row 0 · lora_id = sql"] --> G
+    R1["row 1 · lora_id = support"] --> G
+    R2["row 2 · lora_id = none (base)"] --> G
+    G["group rows by adapter id<br/>(one continuous batch)"] --> BASE["shared base GEMM: y = W·x<br/>run ONCE for the whole batch"]
+    G --> SH["add_shrink: v = A·x<br/>rank-r, grouped per adapter"]
+    SH --> EX["add_expand: delta = B·v · (alpha/r)<br/>grouped per adapter (SGMV / BGMV)"]
+    BASE --> M["merge per row: y_i = base_i + delta_i"]
+    EX --> M
+    M --> OUT["one forward pass, many adapters"]
+```
+
 三个要记住的形状：
 
 - **基座共享；adapter 是每请求的增量。** 昂贵的权重（$W$）对整个 batch 只算一次；每行只加上自己那一小块 $BA$ 修正。这就是为什么异构 batching 很便宜——你不是每个 adapter 重跑一遍模型。
@@ -77,6 +92,16 @@ $$
 ### 3.3 静态 vs 动态加载
 
 adapter 可以**在启动时**声明（`--lora-modules name=path …`），也可以**在运行时**增删。运行时更新受 `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` 门控，通过 `POST /v1/load_lora_adapter`（及一个 unload 端点）暴露。vLLM 文档标注这是一个安全敏感特性——从任意路径加载 adapter 等于你在信任那份代码/数据——所以它「仅用于隔离且完全可信的生产环境」。加载后，客户端只需把 adapter 的**名字放进 OpenAI 风格请求的 `model` 字段**即可选中它。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+「基座共享 + 逐行增量」这套故事直接对应到代码（ADR-0002：读懂 + 会推，不重写）：
+
+- **请求标签**是 [`vllm/lora/request.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/request.py) 里的 **`LoRARequest`**——即 §4 的 `(lora_name, lora_int_id, lora_path)` 三元组。那个**整数 id** 就是 vLLM 在 batch 内按之分组的键。
+- **增量的应用**正是 §3.1 的 $B(Ax)$ 变成两次分组 GEMM 的地方。[`vllm/lora/layers/base_linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/layers/base_linear.py) 里的 `BaseLinearLayerWithLoRA._apply_lora_to_output` 调 `self.punica_wrapper.add_lora_linear(...)`；落到 **`PunicaWrapperGPU`**（[`vllm/lora/punica_wrapper/punica_gpu.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/punica_wrapper/punica_gpu.py)），其 `add_lora_linear` 先跑 **`add_shrink`**（秩-$r$ 的 $v = Ax$）再跑 **`add_expand`**（$B v$）——每一步都*按 adapter 分组*，所以一次调用就服务整个异构 batch。那个分组**就是** §3.2 的 SGMV/BGMV kernel；没有逐 adapter 的 Python 循环。
+- **旋钮**是 **`LoRAConfig`**（[`vllm/config/lora.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/lora.py)）上的 dataclass 字段：`max_lora_rank`（默认 `16`）、`max_loras`（默认 `1`）、`max_cpu_loras`。`LoRAModelManager.max_loras`（[`vllm/lora/model_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/model_manager.py)）只是返回 `self.lora_config.max_loras`——即 §3.2 里每步不同 adapter 数的上限。
+
+先打开 `punica_gpu.py`：`add_shrink` → `add_expand` 就是「$W$ 只算一次、每行加一小块 $BA$」整套思路，约 30 行。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -186,6 +211,7 @@ curl http://localhost:8000/v1/load_lora_adapter -H "Content-Type: application/js
 - **以为 LoRA 就等于全量微调。** 低秩是一种*容量*限制；对那些需要把模型挪动很多的任务，秩 8 的 adapter 可能不如全量微调。秩是质量/大小旋钮，不是白来的。
 - **该运行时却合并、该合并却运行时。** 你*可以*把 adapter 合并进基座权重、得到一个专用单模型（每请求零增量开销）——但那样就放弃了多租户。正因为你想在一个基座上放*很多*个，才保持 adapter 运行时；只有当你只服务恰好一个时才合并。
 - **让运行时加载敞着。** `VLLM_ALLOW_RUNTIME_LORA_UPDATING` 让任意调用者从路径加载权重——把它当作特权。别把 `/v1/load_lora_adapter` 暴露给不可信客户端；vLLM 文档把它限定在完全可信的环境。
+- **忘了 `max_loras` 默认是 1。** 在 `LoRAConfig`（`vllm/config/lora.py`）里 `max_loras` 是 `Field(default=1)`——所以你若开了 LoRA 却从不设它，**每步只有一个 adapter 活跃**，你的「异构 batch」就悄悄串行化了：别的 adapter 的行只能排队等，而非并跑。§2 的整套诀窍需要 `max_loras ≥` 你想在一个 batch 里同放的不同 adapter 数。相信 dataclass 的默认值，别信你记忆里的它。
 
 ## 7 · 面试连线
 
@@ -200,6 +226,7 @@ curl http://localhost:8000/v1/load_lora_adapter -H "Content-Type: application/js
 - vLLM `docs/features/lora.md` — 这里引用的 `--enable-lora` / `--lora-modules` / `--max-lora-rank` 各 flag 与动态加载端点。
 - *LoRA: Low-Rank Adaptation of Large Language Models*（Hu 等，2021）— $\Delta W = BA$ 的表述与秩/质量权衡。
 - *S-LoRA* 与 *Punica* — 让异构 adapter batching 变便宜的分段/分组 GEMM（SGMV/BGMV）kernel。
+- vLLM 源码（v0.26.0）：[`vllm/lora/punica_wrapper/punica_gpu.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/punica_wrapper/punica_gpu.py)（`PunicaWrapperGPU.add_shrink`/`add_expand`）、[`vllm/lora/layers/base_linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/layers/base_linear.py)（`_apply_lora_to_output`）、[`vllm/lora/request.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/lora/request.py)（`LoRARequest`）、[`vllm/config/lora.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/lora.py)（`LoRAConfig`）——§3.4 的分组 GEMM + 配置代码。
 - [PagedAttention 课](../part5/paged-attention.md) — 你现在正在 KV 缓存与 adapter 槽位之间分享其空闲显存的那个 block 池。
 
 ## 9 · 自测小问
