@@ -13,35 +13,25 @@
 
 ## 2 · 心智模型
 
-V1 进程流水线，以及每个 Part 5 概念住在哪：
+V1 进程流水线，以及每个 Part 5 概念住在哪（进程/组件拓扑，按 ADR-0005 用 Mermaid）：
 
-```text
-        HTTP 请求
-             │
-   ┌─────────▼──────────┐   进程 1（随 data parallelism 扩展）
-   │    API SERVER      │   HTTP 收发、tokenize / detokenize、输入处理
-   └─────────┬──────────┘
-             │  (IPC)
-   ┌─────────▼──────────────────────────────────────────┐   进程：每 DP rank 一个
-   │              ENGINE CORE  (busy loop)               │
-   │  ┌───────────────┐   ┌──────────────────────────┐   │
-   │  │  SCHEDULER    │   │  KV-CACHE MANAGER          │   │   ◄── continuous batching (scheduler)
-   │  │ admit/evict、 │   │  BlockPool：alloc/free、   │   │   ◄── PagedAttention (block manager)
-   │  │ chunked       │   │  prefix-cache 哈希映射     │   │   ◄── prefix caching (哈希映射)
-   │  │ prefill、     │   │                            │   │
-   │  │ token 预算    │   │                            │   │
-   │  └───────────────┘   └──────────────────────────┘   │
-   └─────────┬───────────────────────────────────────────┘
-             │  下发 scheduler_output
-   ┌─────────▼──────────────────────────────────────────┐   进程：每 engine core 有 TP × PP 个
-   │              GPU WORKER  (每 GPU 一个)              │   权重、forward、GPU 内存
-   │  ┌────────────────────────────────────────────┐    │
-   │  │  MODEL RUNNER (GPUModelRunner.execute_model) │    │   ◄── CUDA graphs / enforce_eager
-   │  │  输入张量 → nn.Module fwd → logits           │    │   ◄── speculative decoding (校验)
-   │  │            → SAMPLER → token                 │    │
-   │  └────────────────────────────────────────────┘    │
-   └─────────────────────────────────────────────────────┘
-   (+ 数据并行时的 DP COORDINATOR 进程做负载均衡)
+```mermaid
+flowchart TB
+    H["HTTP request"] --> API["API SERVER<br/>HTTP I/O, tokenize / detokenize<br/>(scales with data parallelism)"]
+    API -->|"IPC"| SCH
+    subgraph EC["ENGINE CORE — busy loop (1 per DP rank)"]
+        SCH["SCHEDULER<br/>admit / evict, chunked prefill, token budget<br/>◄ continuous batching, scheduler"]
+        KV["KV-CACHE MANAGER<br/>BlockPool alloc / free + prefix-cache hash map<br/>◄ PagedAttention, prefix caching"]
+        SCH --- KV
+    end
+    EC -->|"dispatch scheduler_output"| MR
+    subgraph W["GPU WORKER — 1 per GPU (TP x PP total)"]
+        MR["MODEL RUNNER (GPUModelRunner.execute_model)<br/>input tensors → nn.Module fwd → logits<br/>◄ CUDA graphs, speculative-decode verify"]
+        SMP["SAMPLER<br/>logits → next token"]
+        MR --> SMP
+    end
+    SMP -->|"token → detokenize"| API
+    DP["DP COORDINATOR<br/>load balancing (when data-parallel)"] -.-> EC
 ```
 
 三个要记的形状：
@@ -75,9 +65,17 @@ HTTP → API server（tokenize）→ engine core busy loop：
 
 让它快的微妙之处：engine core 能在*上一步*的 token 还在 GPU 上处理时就调度*下一步*（scheduler 追踪在途的 "output placeholders"）。这种 CPU/GPU 重叠正是 GPU 很少等 scheduler 的原因。
 
-### 3.3 读源码
+### 3.3 在 vLLM 源码里读它（v0.26.0）
 
-地图告诉你去哪看。设计文档 `docs/design/arch_overview.md` 是叙事；然后在 V1 树里：`vllm/v1/core/sched/`（scheduler）、`vllm/v1/core/block_pool.py` + `kv_cache_manager`（block manager）、`vllm/v1/worker/gpu_worker.py` + `gpu_model_runner.py`（worker + model runner）、`vllm/v1/sample/sampler.py`。遇到症状，打开地图指向的那个盒子——别从头读到尾。
+地图告诉你*该开哪个盒子*——永远别从头读到尾（ADR-0002：读懂 + 会推理，不重写）。先读叙事 [`docs/design/arch_overview.md`](https://github.com/vllm-project/vllm/blob/v0.26.0/docs/design/arch_overview.md)，再跳到症状指向的那个盒子：
+
+- **Engine core / busy loop** → [`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py)：`EngineCore.step()` 驱动一轮 *schedule → execute → collect*（`run_busy_loop` 反复跑它）。
+- **Scheduler** → [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py)：`Scheduler.schedule()`——continuous batching + chunked prefill（token 预算）。
+- **KV-cache manager / block pool** → [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py)：`BlockPool.get_new_blocks`/`free_blocks` + `cached_block_hash_to_block` 映射（PagedAttention、prefix caching）。
+- **Worker + model runner** → [`vllm/v1/worker/gpu_worker.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_worker.py)（`Worker`，每 GPU 一个）与 [`vllm/v1/worker/gpu_model_runner.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_model_runner.py)：**`GPUModelRunner.execute_model`** 备输入张量、跑 `nn.Module` 前向（CUDA graph），随后内联调 sampler。
+- **Sampler** → [`vllm/v1/sample/sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/sampler.py)：`Sampler.forward` 把 logits 变成下一个 token（并施加 logits processors）。
+
+症状 → 盒子：TTFT → `scheduler.py`；启动 OOM → block-pool profiling；decode 慢 → `gpu_model_runner.py`（CUDA graphs）。开那一个文件，别读整棵树。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -186,6 +184,7 @@ print(llm.generate(["Name the parts of a car engine in one line."])[0].outputs[0
 - **假设 V1 == V0。** V1 重构了 scheduler、KV-cache manager、worker、sampler、API server。描述 V0 单进程 `LLMEngine.step()` 的旧博客对不上你要读的代码。确认你在读 V1 树。
 - **从头读到尾。** 地图的存在就是让你*别*这样。从症状的组件起步（TTFT → scheduler；启动 OOM → KV-cache profiling / block pool；decode 慢 → model runner / CUDA graphs），打开那个盒子。
 - **忘了 model runner 捕获 CUDA graph。** 若 decode 莫名慢，查是不是开了 `enforce_eager`（无 graph）——那是 *model runner* 设置，[tuning-knobs 课](tuning-knobs-sweep.md) 讲。
+- **以为 sampler 是独立进程/阶段。** 它不是——`Sampler` 跑在 model runner **内部**：`GPUModelRunner.execute_model` 在同一个 GPU-worker 进程里、前向紧接着调 `self.sampler(logits, …)`，logits processors 也在那儿跑。没有单独的「采样服务」可看；token 选择的延迟就住在 worker 里、紧挨前向。
 
 ## 7 · 面试连线
 
@@ -201,6 +200,7 @@ print(llm.generate(["Name the parts of a car engine in one line."])[0].outputs[0
 - [continuous-batching](continuous-batching.md) 与 [PagedAttention](paged-attention.md) 课——engine core 里那两个盒子的深入。
 - [tuning-knobs 课](tuning-knobs-sweep.md)——每个盒子上的旋钮如何移动吞吐/延迟曲线（自然的下一步）。
 - vLLM `docs/usage/v1_guide.md`——V1 相对 V0 重构了什么、保留了什么，好让你读对代码。
+- vLLM 源码（v0.26.0）：[`vllm/v1/engine/core.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/engine/core.py)（`EngineCore`）、[`vllm/v1/worker/gpu_model_runner.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_model_runner.py)（`GPUModelRunner.execute_model`）、[`vllm/v1/sample/sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/sampler.py)（`Sampler`）—— §3.3 的那些盒子。
 - [PagedAttention kernel](../part3/paged-attention-kernel.md) 课（Part 3）—— KV-cache 管理器那个盒子里的代码。
 - [OpenAI server](../part8/openai-server.md) 课（Part 8）—— API-server 那个盒子作为生产端点暴露出来。
 

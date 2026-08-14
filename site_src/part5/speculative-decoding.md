@@ -13,7 +13,7 @@ The idea rests on the [decode bottleneck](../part0/inference-flow.md) you know c
 
 ## 2 · Mental model
 
-Guess a run of tokens cheaply, verify them in one expensive pass:
+Guess a run of tokens cheaply, verify them in one expensive pass (the vanilla-vs-speculative timeline is a temporal comparison, so ASCII, per ADR-0005):
 
 ```text
 VANILLA decode — one target forward per token (each reads ALL weights):
@@ -30,6 +30,19 @@ SPECULATIVE decode — draft proposes K, target verifies K+1 in ONE pass:
 WHY IT'S ~FREE: decode is memory-bound. A target forward over K+1 tokens reads the
   weights ONCE (same as over 1 token); the extra K positions add compute the GPU had
   idle anyway. You convert idle FLOPs into fewer weight reads.
+```
+
+The draft↔target hand-off, as one round (an interaction, so Mermaid `sequenceDiagram`, per ADR-0005):
+
+```mermaid
+sequenceDiagram
+    participant D as Draft (cheap)
+    participant T as Target (big)
+    D->>T: propose K tokens [t1' t2' t3' t4']
+    Note over T: ONE forward pass over K+1 positions<br/>(one weight read — decode is memory-bound)
+    T->>T: verify each draft token vs target's own distribution
+    T-->>D: accept longest correct prefix (t1 t2 t3),<br/>reject t4', emit target's own t4 as the bonus token
+    Note over D,T: K+1 tokens emitted from ONE target pass,<br/>output bit-identical to vanilla decode
 ```
 
 Three shapes to hold:
@@ -63,6 +76,15 @@ vLLM's `method` picks the draft source, each a different cheap/agreement trade-o
 ### 3.3 When it helps — and when it doesn't
 
 Speculative decoding shines at **low batch size / latency-sensitive single streams**, where decode is squarely memory-bound and the GPU has idle compute to spend on verification. As the [batch grows](continuous-batching.md) and the step becomes compute-bound (past the [roofline ridge](../part2/roofline-analysis.md)), the "free" verification compute is no longer free — so the speedup shrinks, and can even go **negative** (the draft overhead isn't repaid). That's why it's a *latency* tool, not a throughput tool: use it when you're serving few concurrent requests and want each one fast, not when you're saturating the GPU with a big batch.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+The guess-and-verify split maps to two V1 pieces (ADR-0002: read + reason, don't rewrite):
+
+- **The proposers (guess)** live in `vllm/v1/spec_decode/`: [`ngram_proposer.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/spec_decode/ngram_proposer.py)'s **`NgramProposer`** matches the recent context to propose tokens with *no draft model at all*, while the EAGLE proposer (`eagle.py`) runs the tiny trained draft head. Which one runs is selected by `method` on **`SpeculativeConfig`** ([`vllm/config/speculative.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/speculative.py)), whose `num_speculative_tokens` is the **K** of §3.1.
+- **The verify step** is **`RejectionSampler`** in [`vllm/v1/sample/rejection_sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/rejection_sampler.py): it takes the drafted tokens plus the target's single forward-pass logits over all K+1 positions and applies the accept-longest-correct-prefix rule. The **exactness guarantee** (§3.1 — output identical to vanilla decode) lives right here, in how acceptance is defined.
+
+Open `ngram_proposer.py` first — it's the K-token proposer with no model, the cheapest place to see the whole mechanism.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -146,6 +168,7 @@ print(llm.generate([prompt], SamplingParams(max_tokens=64, temperature=0))[0].ou
 - **Picking ngram for novel text.** ngram only proposes tokens it can find in the recent context — great for summarization/editing/RAG (output echoes input), near-useless for open-ended generation. Match the draft method to the workload.
 - **Ignoring the draft's cost/quality trade.** A big accurate draft has high α but its own forwards are expensive; a tiny draft is cheap but low α. The sweet spot (why EAGLE exists) is a draft that's *both* cheap and well-aligned to the target.
 - **Forgetting the draft eats VRAM (except ngram).** A `draft_model`/EAGLE checkpoint sits in the same GPU memory as the target, reducing the [KV-cache budget](paged-attention.md). ngram is the zero-VRAM option.
+- **Assuming any draft config fits any target.** A `draft_model`/EAGLE checkpoint must match the target's family and tokenizer — a mismatched draft tanks acceptance (or fails to load). And `num_speculative_tokens` isn't free-form for every method: for MTP-style drafts vLLM requires it be **divisible by** the draft's `n_predict`, or `SpeculativeConfig` raises at startup. Pick a K the method supports, and a draft trained for *your* target.
 
 ## 7 · Interview links
 
@@ -159,6 +182,7 @@ Further reading:
 
 - Leviathan et al. / Chen et al. — the original *speculative decoding* / *speculative sampling* papers (the accept/reject rule and its exactness proof).
 - vLLM `docs/features/speculative_decoding/` — the `ngram`, `eagle`/`eagle3`, and `draft_model` configs and their trade-offs.
+- vLLM source (v0.26.0): [`vllm/v1/spec_decode/ngram_proposer.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/spec_decode/ngram_proposer.py) (`NgramProposer`), [`vllm/v1/sample/rejection_sampler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/sample/rejection_sampler.py) (`RejectionSampler`), [`vllm/config/speculative.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/speculative.py) (`SpeculativeConfig`) — the propose/verify/config code from §3.4.
 - The [inference-flow lesson](../part0/inference-flow.md) and [roofline](../part2/roofline-analysis.md) — why decode is memory-bound (the premise) and where the batch turns compute-bound (where the win fades).
 - The [continuous-batching lesson](continuous-batching.md) — the throughput axis speculative decoding does *not* address; the two are complementary.
 
