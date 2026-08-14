@@ -15,7 +15,7 @@ PagedAttention 借用了 OS 的修法。把 KV cache 切成固定大小的 **blo
 
 ## 2 · 心智模型
 
-把 KV cache 当物理内存，block table 当页表：
+把 KV cache 当物理内存，block table 当页表（空间布局，按 ADR-0005 用 ASCII）：
 
 ```text
 CONTIGUOUS 预留（朴素引擎）                          PAGED 分配（vLLM）
@@ -28,12 +28,19 @@ CONTIGUOUS 预留（朴素引擎）                          PAGED 分配（vLLM
                                                           新 token 可能再抓一个空闲块；
                                                           结束时，块还回池子。
                                                           → 同样 VRAM 装下多得多的序列
+```
 
-BLOCK MANAGER 生命周期（每迭代，由调度器驱动）：
-  admit(seq)   : 从池子取空闲块给 prompt              （分配）
-  append(tok)  : 若最后一块满了，再取 1 个空闲块       （随长随分）
-  finish(seq)  : 把该序列的块推回空闲池                （释放 → 下一步就被复用）
-  prefix hit   : 把序列的 table 指向一个已存在的块，ref_cnt++（共享，不拷贝）
+每个物理块随请求来去走过一个小小的**状态机**——这就是 block manager 的全部工作（状态/生命周期，按 ADR-0005 用 Mermaid）。下面的状态正是 vLLM V1 的不变式（§3.5）：一个块要么*空闲*（`ref_cnt==0`、无 hash），要么被请求*占有*（`ref_cnt>0`），要么*可复用缓存*（`ref_cnt==0` 但保留 `block_hash`，作为驱逐候选待在空闲队列里）：
+
+```mermaid
+stateDiagram-v2
+    [*] --> Free: BlockPool init<br/>(num_gpu_blocks blocks)
+    Free --> Owned: get_new_blocks()<br/>pop free queue, ref_cnt=1
+    Owned --> Owned: append token / grow;<br/>cache_full_blocks() when a block fills
+    Owned --> Cached: free_blocks(), ref_cnt to 0<br/>block_hash kept (reusable)
+    Owned --> Free: free_blocks(), ref_cnt to 0<br/>no block_hash
+    Cached --> Owned: prefix hit -> touch()<br/>ref_cnt++, leave free queue
+    Cached --> Free: evicted (LRU reuse)<br/>hash cleared
 ```
 
 三个要记的形状：
@@ -75,6 +82,16 @@ $$
 ### 3.4 块共享 → prefix caching（一个推论，稍后调）
 
 因为一个块由其 **token 的哈希**（加上父块的哈希，所以位置也算进去）标识，两个以*相同*前缀开头的请求会产生*相同*的块哈希——于是第二个请求的 block table 可以指向那些**已算好的物理块**而不必重算。命中时，manager 调 `touch()` 把块的 `ref_cnt` 加一（它可能正躺在空闲队列里当驱逐候选）。只有**整块**可缓存，且 KV 逐字节相同，所以**输出不变**。当两个共享者之后分叉时，一次 **copy-on-write** 拆开共享块。整个这个特性——自动 prefix caching——是分页*使能的*；如何配置与利用它（`enable_prefix_caching`、命中率、KV 感知路由）是 [Part 5 下一个话题](prefix-caching.md)。这里只记住形状：**块是共享的单位，而共享就是免费复用。**
+
+### 3.5 在 vLLM 源码里读它（v0.26.0）
+
+这个分配器是教科书式的，短到能一口气读完（ADR-0002：读懂 + 会推理，不重写）：
+
+- **池子**——[`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py) 定义 **`BlockPool`**，用 `num_gpu_blocks` 构造，持有 `self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)` 与 `self.cached_block_hash_to_block`。它的动词与 §3.3 一一对应：**`get_new_blocks(n)`**（分配——从空闲队列 `popleft_n`、`ref_cnt += 1`、驱逐任何过期缓存项）、**`free_blocks(...)`**（结束——推回）、**`cache_full_blocks(...)`**（登记整块的 hash）、**`get_cached_block(...)`**（前缀查找）、**`touch(...)`**（§3.4 那条命中路径）。
+- **块**——[`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) 定义 **`KVCacheBlock`**（一个 dataclass，带 `block_id`、`ref_cnt`、`_block_hash`，以及让空闲表成为双向队列的 `prev_free_block`/`next_free_block` 指针）与 **`FreeKVCacheBlockQueue`**。它的注释写明了 §2 图画出的三态不变式：*可复用缓存*（`ref_cnt==0`、有 hash、在空闲队列）、*请求占有*（`ref_cnt>0`、离开队列）、*真正空闲*（`ref_cnt==0`、无 hash、在空闲队列）。
+- **每请求视图**——[`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py) 定义 **`SingleTypeKVCacheManager`**（每个 KV-cache group 一个），其 `req_to_blocks: defaultdict[str, list[KVCacheBlock]]` *就是* §2 的 block table——从请求 id 到它那串物理块的映射。
+
+先打开 `block_pool.py`：`get_new_blocks` 与 `touch` 合起来就是 §3.3 整个生命周期，约 40 行真实 Python。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -183,6 +200,7 @@ print(llm.generate(["Explain PagedAttention in one sentence."])[0].outputs[0].te
 - **把 `gpu_memory_utilization` 设成 1.0。** 它给激活尖峰或 CUDA 分配器碎片不留余地，招 OOM。默认 0.92 有其道理；小步往上推并盯着 OOM。
 - **指望 prefix caching 改变输出。** 它为共享前缀复用逐字节相同的 KV——结果不变。若开缓存后看到不同输出，那是 bug 不是特性。（细节在[下一课](prefix-caching.md)。）
 - **把碎片当舍入误差。** 在真实长度分布上，连续预留浪费*大部分* VRAM（§4：73%）。这不是小低效——是 4 个与 13 个并发序列之别。
+- **以为「释放」就是「没了」。** 序列结束时，它的块回到空闲队列——但一个被缓存过（仍带 `block_hash`）的块并不会被抹掉；它作为*驱逐候选*（`ref_cnt==0` **且**有 hash，§3.5 不变式里的第三态）滞留，仍持有有效 KV，只在 `get_new_blocks` 真正复用它时才被覆盖。正是这个窗口让 [prefix caching](prefix-caching.md) 能命中一个已结束请求留下的前缀。「释放」意思是「引用减掉」，不是「清零」。
 
 ## 7 · 面试连线
 
@@ -198,6 +216,7 @@ print(llm.generate(["Explain PagedAttention in one sentence."])[0].outputs[0].te
 - Kwon 等 —— *Efficient Memory Management for LLM Serving with PagedAttention*（SOSP '23，vLLM 论文）—— 虚拟内存框架与碎片测量。
 - [continuous-batching 课](continuous-batching.md) —— 这份容量喂养的那个批；分页与 batching 是同一机制的两半。
 - [Part 3：读 vLLM 的 PagedAttention Kernel](../part3/paged-attention-kernel.md) —— 另一半：kernel 如何 gather 这些散落块并算出相同的 attention。
+- vLLM 源码（v0.26.0）：[`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py)（`BlockPool`）、[`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py)（`KVCacheBlock`、`FreeKVCacheBlockQueue`）、[`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py)（`SingleTypeKVCacheManager`）—— §3.5 的分配器。
 - vLLM `docs/design/prefix_caching.md` —— 本课预告的哈希式块共享；如何调优是 Part 5 下一话题。
 
 ## 9 · 自测小问

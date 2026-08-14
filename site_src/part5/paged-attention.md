@@ -15,7 +15,7 @@ PagedAttention borrows the OS fix. Chop the KV cache into fixed-size **blocks** 
 
 ## 2 · Mental model
 
-The KV cache as physical memory, block tables as page tables:
+The KV cache as physical memory, block tables as page tables (a spatial layout, so ASCII, per ADR-0005):
 
 ```text
 CONTIGUOUS reservation (the naive engine)            PAGED allocation (vLLM)
@@ -28,12 +28,19 @@ CONTIGUOUS reservation (the naive engine)            PAGED allocation (vLLM)
   split to lend space to another sequence.                a new token may grab one more free block;
                                                           on finish, blocks return to the pool.
                                                           → many more sequences fit the same VRAM
+```
 
-BLOCK MANAGER lifecycle (per iteration, driven by the scheduler):
-  admit(seq)   : pop free blocks from the pool for the prompt         (allocate)
-  append(tok)  : if the last block is full, pop ONE more free block   (grow on demand)
-  finish(seq)  : push the seq's blocks back to the free pool          (free → reused next step)
-  prefix hit   : point seq's table at an EXISTING block, ref_cnt++     (share, don't copy)
+Each physical block moves through a small **state machine** as requests come and go — this is the block manager's whole job (a state/lifecycle, so Mermaid, per ADR-0005). The states below are exactly vLLM's V1 invariant (§3.5): a block is *free* (`ref_cnt==0`, no hash), *owned* by a request (`ref_cnt>0`), or *cached-reusable* (`ref_cnt==0` but keeps its `block_hash`, sitting in the free queue as an eviction candidate):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Free: BlockPool init<br/>(num_gpu_blocks blocks)
+    Free --> Owned: get_new_blocks()<br/>pop free queue, ref_cnt=1
+    Owned --> Owned: append token / grow;<br/>cache_full_blocks() when a block fills
+    Owned --> Cached: free_blocks(), ref_cnt to 0<br/>block_hash kept (reusable)
+    Owned --> Free: free_blocks(), ref_cnt to 0<br/>no block_hash
+    Cached --> Owned: prefix hit -> touch()<br/>ref_cnt++, leave free queue
+    Cached --> Free: evicted (LRU reuse)<br/>hash cleared
 ```
 
 Three shapes to hold:
@@ -75,6 +82,16 @@ Each scheduler iteration (the admit→step→evict loop from the [batching lesso
 ### 3.4 Block sharing → prefix caching (a consequence, tuned later)
 
 Because a block is identified by the **hash of its tokens** (plus its parent block's hash, so position matters), two requests that begin with the *same* prefix produce the *same* block hashes — so the second request's block table can point at the **already-computed physical blocks** instead of recomputing them. On a hit, the manager calls `touch()` to bump the block's `ref_cnt` (it may have been sitting in the free queue as an eviction candidate). Only **full** blocks are cacheable, and the KV is byte-identical, so **outputs don't change**. When two sharers later diverge, a **copy-on-write** splits the shared block. This whole feature — automatic prefix caching — is *enabled by* paging; how to configure and exploit it (`enable_prefix_caching`, hit rates, KV-aware routing) is the [next Part 5 topic](prefix-caching.md). Here, just hold the shape: **blocks are the unit of sharing, and sharing is free reuse.**
+
+### 3.5 Reading it in vLLM's source (v0.26.0)
+
+The allocator is textbook, and short enough to read end-to-end (ADR-0002: read + reason, don't rewrite):
+
+- **The pool** — [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py) defines **`BlockPool`**, built with `num_gpu_blocks` and holding `self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)` plus `self.cached_block_hash_to_block`. Its verbs map one-to-one to §3.3: **`get_new_blocks(n)`** (allocate — `popleft_n` from the free queue, `ref_cnt += 1`, evict any stale cache entry), **`free_blocks(...)`** (finish — push back), **`cache_full_blocks(...)`** (register a full block's hash), **`get_cached_block(...)`** (prefix lookup), and **`touch(...)`** (the exact hit path from §3.4).
+- **The block** — [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) defines **`KVCacheBlock`** (a dataclass with `block_id`, `ref_cnt`, `_block_hash`, and the `prev_free_block`/`next_free_block` pointers that make the free list a doubly-linked queue) and **`FreeKVCacheBlockQueue`**. Its comments spell out the three-state invariant the §2 diagram draws: *cached-reusable* (`ref_cnt==0`, hash set, in the free queue), *request-owned* (`ref_cnt>0`, out of the queue), *truly free* (`ref_cnt==0`, no hash, in the queue).
+- **The per-request view** — [`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py) defines **`SingleTypeKVCacheManager`** (one per KV-cache group), whose `req_to_blocks: defaultdict[str, list[KVCacheBlock]]` *is* the block table of §2 — the map from request id to its list of physical blocks.
+
+Open `block_pool.py` first: `get_new_blocks` and `touch` together are the entire §3.3 lifecycle in ~40 lines of real Python.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -183,6 +200,7 @@ print(llm.generate(["Explain PagedAttention in one sentence."])[0].outputs[0].te
 - **Setting `gpu_memory_utilization` to 1.0.** It leaves no headroom for activation spikes or fragmentation in the CUDA allocator and invites OOM. The default 0.92 exists for a reason; push it up in small steps and watch for OOM.
 - **Expecting prefix caching to change outputs.** It reuses byte-identical KV for a shared prefix — the result is unchanged. If you see different outputs with caching on, that's a bug, not the feature. (Details are the [next lesson](prefix-caching.md).)
 - **Treating fragmentation as a rounding error.** On real length distributions, contiguous reservation wastes the *majority* of VRAM (§4: 73%). It's not a minor inefficiency — it's the difference between 4 and 13 concurrent sequences.
+- **Assuming "freed" means "gone."** When a sequence finishes, its blocks return to the free queue — but a block that was cached (still carries its `block_hash`) isn't wiped; it lingers as an *eviction candidate* (`ref_cnt==0` **with** a hash, the third state in §3.5's invariant), still holding valid KV, and is only overwritten when `get_new_blocks` actually reuses it. That window is exactly what lets [prefix caching](prefix-caching.md) hit a prefix left behind by an already-finished request. "Freed" means "reference dropped," not "zeroed."
 
 ## 7 · Interview links
 
@@ -198,6 +216,7 @@ Further reading:
 - Kwon et al. — *Efficient Memory Management for LLM Serving with PagedAttention* (SOSP '23, the vLLM paper) — the virtual-memory framing and the fragmentation measurements.
 - The [continuous-batching lesson](continuous-batching.md) — the batch this capacity feeds; paging and batching are two halves of one mechanism.
 - [Part 3: Reading vLLM's PagedAttention Kernel](../part3/paged-attention-kernel.md) — the other half: how the kernel gathers these scattered blocks and computes identical attention.
+- vLLM source (v0.26.0): [`vllm/v1/core/block_pool.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/block_pool.py) (`BlockPool`), [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) (`KVCacheBlock`, `FreeKVCacheBlockQueue`), [`vllm/v1/core/single_type_kv_cache_manager.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/single_type_kv_cache_manager.py) (`SingleTypeKVCacheManager`) — the allocator from §3.5.
 - vLLM `docs/design/prefix_caching.md` — the hash-based block sharing this lesson previews; the how-to-tune is the next Part 5 topic.
 
 ## 9 · Self-check

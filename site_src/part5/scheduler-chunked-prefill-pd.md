@@ -15,7 +15,7 @@ Here's the concrete pain. A new request with a long prompt (say 8k tokens) needs
 
 ## 2 · Mental model
 
-The token budget per step, and where prefill goes:
+The token budget per step, and where prefill goes (per-step token timelines are temporal, so ASCII, per ADR-0005):
 
 ```text
 ONE SCHEDULER STEP = a budget of `max_num_batched_tokens` tokens to spend.
@@ -31,14 +31,17 @@ WITH chunked prefill — each step mixes a prefill chunk with the decodes:
   step k+1 : [ decode×D | prefill chunk (budget−D) ]   ongoing decodes: ✓ advanced
   step k+2 : [ decode×D | prefill chunk (last)     ]   ongoing decodes: ✓ advanced
              └ decodes never stall; prefill finishes a bit later (TTFT trade) ┘
+```
 
-PD DISAGGREGATION — split the two phases across hardware (multi-GPU):
-  ┌─ PREFILL pool ─┐   KV cache    ┌─ DECODE pool ─┐
-  │ compute-bound  │ ───────────►  │ memory-bound  │
-  │ big GEMMs, TTFT│  transferred  │ big batches,  │
-  │                │  (NixlConn.)  │ smooth ITL    │
-  └────────────────┘               └───────────────┘
-  each pool tuned for ITS bottleneck instead of one GPU compromising
+**PD disaggregation** takes the same idea across *hardware*: run prefill and decode on separate pools and stream the KV between them. That's a request flowing across nodes — a topology, so Mermaid, per ADR-0005:
+
+```mermaid
+flowchart LR
+    C["client"] --> P["proxy / router"]
+    P -->|"1. prefill request<br/>(max_tokens=1)"| PF["PREFILL pool<br/>compute-bound · big GEMMs<br/>kv_role: kv_producer"]
+    PF -->|"2. KV cache + kv_transfer_params<br/>(NixlConnector)"| DE["DECODE pool<br/>memory-bound · big batches<br/>kv_role: kv_consumer"]
+    P -->|"3. decode request<br/>(same request id)"| DE
+    DE -->|"streamed tokens"| C
 ```
 
 Three shapes to hold:
@@ -71,6 +74,14 @@ Why bother? Because now you can **scale and tune the two pools independently** �
 ### 3.3 The through-line
 
 Both techniques answer "prefill and decode don't want the same thing." Chunked prefill **interleaves** them on one GPU (time-division); PD disaggregation **separates** them onto different GPUs (space-division). Recognizing that shared root is the interview-grade insight.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+Chunked prefill isn't a separate code path — it falls out of how the V1 scheduler counts tokens. Open **`Scheduler.schedule()`** in [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py) and read its own comment (verified at v0.26.0):
+
+> *"There's no 'decoding phase' nor 'prefill phase' in the scheduler. Each request just has `num_computed_tokens` and `num_tokens_with_spec` … At each step, the scheduler tries to assign tokens … so that each request's `num_computed_tokens` can catch up [to] its `num_tokens_with_spec`. This is general enough to cover chunked prefills, prefix caching, speculative decoding …"*
+
+That's the whole trick: a request with a 5000-token prompt just has `num_computed_tokens = 0` and `num_tokens_with_spec = 5000`. Each step, `schedule()` starts with `token_budget = self.max_num_scheduled_tokens` (which defaults to `max_num_batched_tokens`), lets running decodes take their one token each, and gives a prefill **only as many of its remaining tokens as still fit the budget** — that leftover slice *is* the chunk. The rest waits for the next step; no special "chunk this prefill" branch is needed. A per-request cap, **`long_prefill_token_threshold`**, additionally bounds how much of one long prompt a single step will take. So `enable_chunked_prefill` doesn't switch on an algorithm so much as *allow* a prefill to be scheduled partially instead of all-or-nothing. (The flag itself lives on `SchedulerConfig` in [`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py).)
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -164,6 +175,7 @@ print(len(llm.generate(prompts, SamplingParams(max_tokens=32))), "responses")
 - **Reaching for PD disaggregation on one GPU.** It fundamentally needs ≥2 instances (a producer and a consumer). On a single 4090 there's nothing to disaggregate; chunked prefill is your prefill/decode lever there.
 - **Forgetting PD's transfer cost.** Moving the KV cache between pools costs bandwidth and latency per request; PD wins when independent scaling/tuning of the two pools outweighs that transfer — a large-fleet call, not a default.
 - **Confusing chunked prefill with prefix caching.** Chunked prefill splits *one* prefill across steps; [prefix caching](prefix-caching.md) skips prefill entirely for a *shared* prefix. Different levers, often used together.
+- **Hunting for a `chunk_size` knob.** There isn't one. As the V1 `schedule()` shows (§3.4), a prefill's chunk is just the `token_budget` left after the step's decodes are placed — you shape it *indirectly* through `max_num_batched_tokens`, and cap a single long prompt's per-step bite with `long_prefill_token_threshold`. Searching for `--chunk-size` and not finding it is the tell that you've misread the mechanism as a fixed slice rather than "whatever budget is left."
 
 ## 7 · Interview links
 
@@ -179,6 +191,7 @@ Further reading:
 - The [continuous-batching lesson](continuous-batching.md) — the running set this scheduler shapes; chunked prefill decides the *token mix* within each step.
 - The [inference-flow lesson](../part0/inference-flow.md) — why prefill is compute-bound and decode memory-bound, the premise both techniques exploit.
 - vLLM disaggregated-prefill docs and the NixlConnector usage guide — the `--kv-transfer-config` producer/consumer setup for PD.
+- vLLM source (v0.26.0): [`vllm/v1/core/sched/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/sched/scheduler.py) (`Scheduler.schedule`, the `num_computed_tokens`/`token_budget` mechanism) and [`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py) (`SchedulerConfig.enable_chunked_prefill`) — the code behind §3.4.
 - Next in Part 5: [prefix caching](prefix-caching.md) — skip prefill entirely when a prefix repeats.
 
 ## 9 · Self-check
