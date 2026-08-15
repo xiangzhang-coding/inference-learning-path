@@ -1,7 +1,7 @@
 # Large set
 
 !!! info "Baseline: **vLLM 0.26.0** · model `Qwen2.5-7B-Instruct` · single RTX 4090 (24 GB)"
-    Harness verified against vLLM 0.26.0 via Context7 (ADR-0004). This is a **learner-runnable resource**; the author does not execute it. Any number you get is **yours** — see the [overview](index.md#on-the-numbers).
+    Harness verified against vLLM 0.26.0 via Context7 (ADR-0004). This is a **learner-runnable resource** — a *recipe* (seeded downloader + scorer + runner) that samples a fixed slice from a public benchmark, **not a hand-written list of items**; the author does not execute it. Any number you get is **yours** — see the [overview](index.md#on-the-numbers).
 
 ---
 

@@ -18,6 +18,10 @@ vLLM iterates fast — APIs, flags, CLI parameters, and even source-code line nu
 
 A handful of sections that discuss a newer feature may annotate a **higher** version and call out the difference explicitly (ADR-0004). Always trust the callout at the top of the page you are on.
 
+## The docs toolchain is pinned too
+
+The site is built with MkDocs Material + `mkdocs-static-i18n` + `pymdown-extensions`, all capped to their current major version in `requirements.txt` (e.g. `mkdocs-material>=9.5,<10`) so a fresh `pip install` reproduces *today's* rendering instead of silently pulling a breaking release. This matters right now: the Material team has announced that **MkDocs 2.0 will be backward-incompatible** — the plugin and theming systems are being rewritten with no migration path — so an uncapped upgrade would break the build. Treat a toolchain bump like a vLLM bump: change one dependency, run `mkdocs build --strict`, and eyeball a rendered page (math, admonitions, the language switch) before trusting it.
+
 ## Why the numbers are illustrative
 
 Following ADR-0004, verification here is **static**: the author does **not** execute Labs or reproduce the figures. Every performance number in the site is therefore an **illustrative / order-of-magnitude reference** — a shape to reason about, not a measurement to quote. You reproduce the real numbers yourself, on your own AutoDL box, for your own model and traffic.

@@ -8,5 +8,5 @@
 
 mkdocs-material>=9.5,<10      # MkDocs Material theme (nav, search, admonitions, code)
 mkdocs-static-i18n>=1.2,<2    # bilingual suffix structure: page.md (en) / page.zh.md (zh)
-pymdown-extensions>=10.0      # arithmatex (KaTeX), superfences, tabs, details, etc.
-jieba>=0.42                   # Chinese word segmentation for Material search (lang: zh)
+pymdown-extensions>=10.0,<11  # arithmatex (KaTeX), superfences, tabs, details, etc.
+jieba>=0.42,<1               # Chinese word segmentation for Material search (lang: zh)
