@@ -1,6 +1,6 @@
 # Interview Bank
 
-> A growing bank of **high-frequency** interview questions, organized by module (Part 0–8). Each question follows one schema: **direct answer → deep dive → code (if applicable) → interviewer follow-up → linked concept**.
+> A **curated** bank of **high-frequency** interview questions, organized by module (Part 0, 2–8). Each question follows one schema: **direct answer → deep dive → code (if applicable) → interviewer follow-up → linked concept**.
 
 Every question links back to the lesson it tests, and every lesson's "Interview links" section links here — a closed learn-and-practice loop.
 
@@ -31,17 +31,20 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
 - **Part 5 · Serving & Throughput (vLLM Core)**
     - [Static vs continuous batching](continuous-batching.md) — why static batching wastes the GPU, what iteration-level scheduling means, and what actually limits the batch size.
     - [PagedAttention: block manager & fragmentation](kv-cache-block-manager.md) — why contiguous KV fragments, what the block manager does, how `num_gpu_blocks` is set, and how paging becomes throughput.
+    - [Preemption: recompute vs swap](preemption.md) — what vLLM does when the KV pool is exhausted, why V1 defaults to recompute (and dropped swap), and the capacity knobs that stop it.
     - [Chunked prefill & PD disaggregation](chunked-prefill-pd.md) — why a long prefill stalls decode, what chunked prefill trades, the `max_num_batched_tokens` dial, and when to disaggregate.
     - [Prefix caching](prefix-caching.md) — how block hashing makes reuse safe, why only full blocks cache, when it helps, and why outputs are unchanged.
     - [Speculative decoding](speculative-decoding.md) — guess-and-verify, why it's free only because decode is memory-bound, what sets the speedup, and when it backfires.
     - [Trace a request through vLLM's architecture](vllm-architecture.md) — the V1 components (API server / engine core / worker), an end-to-end trace, and which optimization lives in which box.
     - [Tuning knobs: which one for which SLO](tuning-knobs.md) — which knob moves which end of the throughput/latency curve, its trade, and the sweep to run.
+    - [Sampling parameters: temperature, top-p/top-k & throughput](sampling-parameters.md) — the sampling knobs and greedy decoding, why they barely move throughput, and why fixed sampling makes an eval reproducible.
 - **Part 6 · Advanced Inference Topics**
     - [Multi-LoRA serving: one base, many adapters](multi-lora-serving.md) — why a LoRA adapter is tiny, how vLLM batches heterogeneous adapters via grouped GEMM, and the knobs (`max_lora_rank`, `max_loras`, dynamic loading) that cap how many you can co-serve.
     - [Guided / structured decoding](structured-decoding.md) — how a schema becomes a per-step logit mask, why the guarantee is hard rather than statistical, its cost, and why it fixes shape but never truth.
     - [Long-context inference: positions, sinks & the KV wall](long-context-inference.md) — why models break past training length and how RoPE scaling (PI/NTK/YaRN) fixes it, what the attention sink is, and why the KV cache — not compute — is the long-context ceiling.
 - **Part 7 · Multi-GPU & Distributed**
     - [Parallelism: TP/PP/DP/EP & when to use each](parallelism-strategies.md) — the two reasons to parallelize, what each of TP/PP/DP/EP splits and costs to communicate, why TP stays within a node while PP crosses them, and how to pick a strategy from model size and topology.
+    - [MoE inference: active vs total params & expert routing](moe-inference.md) — active-vs-total params and FLOPs, how the router picks experts per token, and why EP (not TP) is the multi-GPU answer for the experts' memory.
     - [NCCL collectives & launching TP/PP](nccl-collective-communication.md) — what all-reduce / all-gather / reduce-scatter each move, why ring all-reduce is ~2× the message independent of GPU count, which collective TP uses and how often, and how vLLM launches TP/PP single- vs multi-node (mp vs ray) — including debugging an init hang.
 - **Part 8 · Production & System Design**
     - [Serving over HTTP: the OpenAI-compatible server & its endpoints](openai-server-deployment.md) — what `vllm serve` exposes, `/v1/chat/completions` vs `/v1/completions`, what `/health` does and doesn't promise, how auth works, and interface vs capacity flags.
@@ -51,7 +54,6 @@ Every question links back to the lesson it tests, and every lesson's "Interview 
     - [SLO-driven tuning: goodput, the binding constraint & the loop](slo-driven-tuning.md) — why you optimize goodput against an SLO, reading the binding constraint (queue/prefill/decode/KV) from metrics, which knob relieves which, and the one-knob-at-a-time loop.
     - [The serving ecosystem: choosing vLLM vs TensorRT-LLM / TGI / SGLang / LMDeploy](framework-comparison.md) — the shared baseline vs the divergence axes, a defensible default with exceptions, and deciding by benchmarking OpenAI-compatibly on your own workload at your SLO.
     - [System design: sizing & designing an inference service](system-design.md) — **long-form** drills: the framework (clarify → napkin math → architecture → bottlenecks → trade-offs) and several complete worked designs (a chat API for X QPS at Y latency, a multi-tenant LoRA platform, long-context RAG).
-- **Part 1** — questions land alongside their lessons in later tickets.
 
-!!! note "Scaffolding status"
-    Part 0 (tickets #2, #4, #5), Part 2 (tickets #6, #7), Part 3 (tickets #8, #9), Part 4 (tickets #10, #11), Part 5 (tickets #12, #13, #14), Part 6 (tickets #15, #16), Part 7 (tickets #17, #18), and all seven Part 8 questions (tickets #19, #20, #21 — the last a set of system-design long questions) are in, each two-way-linked to the lesson it tests. The full ~100-question bank grows as parts land. Difficulty tiers / frequency tags / weighting are intentionally out of scope for now.
+!!! note "How to use this bank"
+    Each question is two-way-linked to the lesson it tests — read the lesson, then drill the question, or hit a question cold and follow the link back when you need the mechanism. This is a curated high-frequency set, not an exhaustive one; difficulty tiers, frequency tags, and weighting are intentionally out of scope.

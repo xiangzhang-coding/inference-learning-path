@@ -95,15 +95,18 @@ nav:
       - "Quantizing & serving in practice": interview/quantization-serving.md
       - "Static vs continuous batching": interview/continuous-batching.md
       - "PagedAttention: block manager & fragmentation": interview/kv-cache-block-manager.md
+      - "Preemption: recompute vs swap": interview/preemption.md
       - "Chunked prefill & PD disaggregation": interview/chunked-prefill-pd.md
       - "Prefix caching": interview/prefix-caching.md
       - "Speculative decoding": interview/speculative-decoding.md
       - "Trace a request through vLLM's architecture": interview/vllm-architecture.md
       - "Tuning knobs: which one for which SLO": interview/tuning-knobs.md
+      - "Sampling parameters: temperature, top-p/top-k": interview/sampling-parameters.md
       - "Multi-LoRA serving: one base, many adapters": interview/multi-lora-serving.md
       - "Guided / structured decoding": interview/structured-decoding.md
       - "Long-context inference: positions, sinks & the KV wall": interview/long-context-inference.md
       - "Parallelism: TP/PP/DP/EP & when to use each": interview/parallelism-strategies.md
+      - "MoE inference: active vs total params": interview/moe-inference.md
       - "NCCL collectives & launching TP/PP": interview/nccl-collective-communication.md
       - "Serving over HTTP: the OpenAI-compatible server": interview/openai-server-deployment.md
       - "Load-testing & the concurrency knee": interview/load-testing-knee.md
@@ -237,15 +240,18 @@ plugins:
             "Quantizing & serving in practice": "实操量化与服务"
             "Static vs continuous batching": "Static vs Continuous Batching"
             "PagedAttention: block manager & fragmentation": "PagedAttention：block manager 与碎片"
+            "Preemption: recompute vs swap": "抢占：recompute vs swap"
             "Chunked prefill & PD disaggregation": "Chunked prefill 与 PD 分离"
             "Prefix caching": "Prefix caching"
             "Speculative decoding": "Speculative decoding"
             "Trace a request through vLLM's architecture": "追踪一个请求穿过 vLLM 架构"
             "Tuning knobs: which one for which SLO": "调参旋钮：哪个对哪个 SLO"
+            "Sampling parameters: temperature, top-p/top-k": "采样参数：temperature、top-p/top-k"
             "Multi-LoRA serving: one base, many adapters": "Multi-LoRA serving：一基座，多 adapter"
             "Guided / structured decoding": "Guided / structured decoding：约束解码"
             "Long-context inference: positions, sinks & the KV wall": "长上下文推理：位置、sink 与 KV 墙"
             "Parallelism: TP/PP/DP/EP & when to use each": "并行策略：TP/PP/DP/EP 及各自适用场景"
+            "MoE inference: active vs total params": "MoE 推理：激活参数 vs 总参数"
             "NCCL collectives & launching TP/PP": "NCCL 集合通信与启动 TP/PP"
             "Serving over HTTP: the OpenAI-compatible server": "HTTP 服务化：OpenAI 兼容 server"
             "Load-testing & the concurrency knee": "压测与并发拐点"

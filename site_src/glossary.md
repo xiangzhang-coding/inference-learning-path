@@ -7,6 +7,7 @@
 - **Prefill** — the stage that processes the whole input prompt at once, computes its KV, and emits the first output token; usually → compute-bound. → Decode, → TTFT
 - **Decode** — the autoregressive stage that generates subsequent tokens one at a time, computing a single new token per step and appending its KV; usually → memory-bound. → Prefill, → TPOT
 - **Autoregressive** — each new token is generated conditioned on all previous tokens.
+- **Sampling parameters** — temperature, top-p / top-k and related knobs that control token selection at each → Decode step; greedy (temperature=0) vs sampling, affecting output diversity and also batching / throughput.
 
 ## Memory & Cache
 
@@ -57,6 +58,7 @@
 - **PD disaggregation** — split → Prefill and → Decode onto different resources to optimize each separately.
 - **Prefix caching** — reuse the KV of a shared prefix, skipping repeated prefill.
 - **Speculative decoding** — a small draft model guesses several tokens, the large model verifies them in one pass, speeding up → Decode.
+- **Preemption (recompute vs swap)** — when the → KV cache pool is exhausted, the scheduler pauses some sequences and reclaims their KV, choosing on resume to **recompute** or **swap** (out/in); the mechanism that preserves fairness and throughput under concurrency. → PagedAttention
 
 ## Advanced Topics
 

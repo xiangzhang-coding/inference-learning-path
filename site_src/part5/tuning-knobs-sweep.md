@@ -211,6 +211,7 @@ for gmu in (0.80, 0.90, 0.94):
 ## 7 · Interview links
 
 - [Tuning knobs: which one for which SLO](../interview/tuning-knobs.md) — the high-frequency question this lesson prepares you for: *given a TTFT / throughput / OOM problem, name the knob, its direction on the curve, and its trade — and describe the sweep you'd run.*
+- [Sampling parameters: temperature, top-p/top-k & throughput](../interview/sampling-parameters.md) — the near-universal warm-up: define the sampling knobs and greedy decoding, and explain why they barely move throughput while pinning `temperature=0` is what makes a sweep reproducible.
 
 ## 8 · Summary & further reading
 

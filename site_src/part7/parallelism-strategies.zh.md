@@ -240,6 +240,7 @@ Llama-3.1-405B  FP16  754.4 GB -> needs TP>=64    TP all-reduce ~ 8064.0 KB/toke
 ## 7 · 面试连线
 
 - [并行策略：TP/PP/DP/EP 及各自适用场景](../interview/parallelism-strategies.md) —— 本节课为你准备的高频题：*并行的两个理由、TP/PP/DP/EP 各切什么与通信代价、为什么 TP 待在节点内而 PP 跨节点、以及如何从模型大小和拓扑选出策略。*
+- [MoE 推理：激活参数 vs 总参数与专家路由](../interview/moe-inference.md) —— MoE 追问：激活 vs 总参数、router 如何逐 token 挑专家、以及为什么专家的显存问题多卡上答 EP（而非 TP）。
 
 ## 8 · 小结 & 延伸阅读
 

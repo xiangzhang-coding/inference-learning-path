@@ -206,6 +206,7 @@ print(llm.generate(["Explain PagedAttention in one sentence."])[0].outputs[0].te
 
 - [KV cache as virtual memory: block manager & fragmentation](../interview/kv-cache-block-manager.md) — the high-frequency question this lesson prepares you for: *why contiguous KV fragments, what the block manager does, how `num_gpu_blocks` is set, and how paging turns into throughput.*
 - Related, from the kernel side: [PagedAttention kernel & block tables](../interview/paged-attention-kernel.md) — the gather, the cache layout, why it equals dense attention.
+- [Preemption: recompute vs swap](../interview/preemption.md) — what happens when the KV pool is exhausted: preempt-and-resume, why V1 defaults to recompute (and dropped swap), and the capacity knobs that stop it.
 
 ## 8 · Summary & further reading
 

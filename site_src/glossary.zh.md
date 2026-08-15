@@ -7,6 +7,7 @@
 - **Prefill / 预填充** — 一次性处理输入 prompt 的全部 token、算出其 KV 并产出第一个输出 token 的阶段；通常 → Compute-bound。→ Decode、→ TTFT
 - **Decode / 解码** — 自回归逐个生成后续 token 的阶段，每步只算一个新 token 并追加其 KV；通常 → Memory-bound。→ Prefill、→ TPOT
 - **Autoregressive / 自回归** — 每个新 token 的生成都以此前所有 token 为条件。
+- **Sampling parameters / 采样参数** — temperature、top-p / top-k 等控制 → Decode 每步 token 选择的参数；greedy（temperature=0）vs 采样，影响输出多样性，也影响批处理与吞吐。
 
 ## 显存与缓存 Memory & Cache
 
@@ -57,6 +58,7 @@
 - **PD disaggregation / PD 分离** — 把 → Prefill 与 → Decode 拆到不同资源上分别优化。
 - **Prefix caching / 前缀缓存** — 复用相同前缀的 KV，省去重复 prefill。
 - **Speculative decoding / 投机解码** — 用小 draft model 猜多个 token、大模型一次校验，加速 → Decode。
+- **Preemption / 抢占（recompute vs swap）** — → KV cache 池耗尽时，调度器暂停部分序列并回收其 KV，恢复时选择**重算**（recompute）或**换出/换入**（swap）；保障并发下公平与吞吐的机制。→ PagedAttention
 
 ## 进阶专题 Advanced Topics
 

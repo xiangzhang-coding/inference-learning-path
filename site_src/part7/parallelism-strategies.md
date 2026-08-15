@@ -240,6 +240,7 @@ Reason your way through the split before you ever rent a second GPU:
 ## 7 · Interview links
 
 - [Parallelism: TP/PP/DP/EP & when to use each](../interview/parallelism-strategies.md) — the high-frequency question this lesson prepares you for: *the two reasons to parallelize, what each of TP/PP/DP/EP splits and what it costs to communicate, why TP stays within a node while PP crosses them, and how to pick a strategy from model size and topology.*
+- [MoE inference: active vs total params & expert routing](../interview/moe-inference.md) — the MoE follow-up: active-vs-total params, how the router picks experts per token, and why EP (not TP) is the multi-GPU answer for the experts' memory.
 
 ## 8 · Summary & further reading
 

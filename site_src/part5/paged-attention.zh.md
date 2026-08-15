@@ -206,6 +206,7 @@ print(llm.generate(["Explain PagedAttention in one sentence."])[0].outputs[0].te
 
 - [KV cache 即虚拟内存：block manager & 碎片](../interview/kv-cache-block-manager.md)——本课为你准备的高频题：*为什么连续 KV 会碎片、block manager 做什么、`num_gpu_blocks` 怎么定、分页如何变成吞吐。*
 - 相关，kernel 侧：[PagedAttention kernel & block table](../interview/paged-attention-kernel.md)——gather、cache 布局、为何等于 dense attention。
+- [抢占：recompute vs swap](../interview/preemption.md)——KV 池耗尽时会发生什么：抢占并恢复、V1 为何默认 recompute（并去掉 swap）、以及阻止它的容量旋钮。
 
 ## 8 · 小结 & 延伸阅读
 

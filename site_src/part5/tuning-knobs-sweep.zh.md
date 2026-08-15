@@ -211,6 +211,7 @@ for gmu in (0.80, 0.90, 0.94):
 ## 7 · 面试连线
 
 - [调参旋钮：哪个对哪个 SLO](../interview/tuning-knobs.md)——本课为你准备的高频题：*给定 TTFT / 吞吐 / OOM 问题，说出旋钮、它在曲线上的方向、它的权衡——并描述你会跑的 sweep。*
+- [采样参数：temperature、top-p/top-k 与吞吐](../interview/sampling-parameters.md)——近乎必问的开胃题：说清采样旋钮与 greedy 解码，并解释它们为何几乎不动吞吐、而钉死 `temperature=0` 才让 sweep 可复现。
 
 ## 8 · 小结 & 延伸阅读
 
