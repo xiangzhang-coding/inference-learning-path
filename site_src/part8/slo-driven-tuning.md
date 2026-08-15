@@ -40,6 +40,25 @@ The SLO carves a **target box** on the latency/throughput plane. Tuning = push g
      KV full (gpu_cache_usage_perc→1.0)          → --gpu-memory-utilization↑, --max-model-len↓, KV quant
 ```
 
+The SLO box above is a spatial sketch (ASCII per ADR-0005). The *diagnose→knob* decision the loop runs each iteration is a decision tree, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    M["read /metrics: which constraint binds now?"] --> Q{"num_requests_waiting deep?"}
+    Q -->|"yes"| CAP["NOT a tuning problem: add replicas / route<br/>(past the knee — capacity)"]
+    Q -->|"no"| P{"prefill time / TTFT high?"}
+    P -->|"yes"| PK["--max-num-batched-tokens (smaller) · --enable-prefix-caching"]
+    P -->|"no"| D{"decode time / TPOT high?"}
+    D -->|"yes"| DK["--max-num-seqs · quantization · speculative decoding"]
+    D -->|"no"| K{"gpu_cache_usage_perc near 1.0?"}
+    K -->|"yes"| KK["--gpu-memory-utilization up · --max-model-len down · KV quant"]
+    K -->|"no"| DONE["at the hardware limit — stop tuning"]
+    PK --> RE["re-measure goodput, keep if better, then one more knob"]
+    DK --> RE
+    KK --> RE
+    RE --> M
+```
+
 Three shapes to keep:
 
 - **The SLO comes first; goodput is the score.** Without a target you can't say a config is "better" — faster on one axis is always slower on another. The SLO turns a multi-objective mess into one number: goodput inside the box.
@@ -78,6 +97,15 @@ Each knob moves one wall (these are the [Part 5 tuning knobs](../part5/tuning-kn
 ### 3.4 The loop
 
 **Define SLO → measure goodput (`vllm bench serve`) → diagnose the binding constraint (`/metrics`) → turn the one matching knob → re-measure.** Keep a config only if it *raises goodput while still meeting the SLO*. Stop when goodput plateaus — you've hit the hardware's real limit for this workload, and further gains need different hardware or more replicas. Crucially, tune against a workload that matches production (input/output length mix): the winning config for 512-in/128-out is not the winner for 4k-in/1k-out.
+
+### 3.5 Reading it in vLLM's source (v0.26.0)
+
+The loop reads code you've already met — nothing new to build (ADR-0002: read + reason, don't rewrite):
+
+- **The knobs are dataclass fields**, so "turn one knob" is "set one field": `max_num_seqs` and `max_num_batched_tokens` on **`SchedulerConfig`** ([`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)), `gpu_memory_utilization` (default `0.92`) and `max_model_len` on **`CacheConfig`** / model config ([`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)). `SchedulerConfig` even validates the cross-knob rule `max_num_batched_tokens ≥ max_num_seqs`, so an invalid pair fails at startup rather than silently.
+- **The score and the diagnosis are the previous two lessons' code**: goodput comes from `calculate_metrics` / `request_goodput` in [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py), and the binding-constraint signals are declared by `PrometheusStatLogger` in [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) — **gauges** for the counts (`vllm:num_requests_waiting`, `gpu_cache_usage_perc`) and **histograms** for the timings (prefill/decode).
+
+So the loop is: read a gauge (`loggers.py`), set a config field (`scheduler.py`/`cache.py`), re-score with `serve.py`. There's no "tuner" module — the discipline is yours; the engine just exposes the fields and the numbers.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -155,6 +183,7 @@ Steps:
 - **Tuning on the wrong workload.** The winning config for short prompts loses for long ones (prefill- vs decode-heavy saturate different resources). Tune against a prompt/length mix that matches production.
 - **Chasing past the plateau.** When goodput stops improving, you've hit the hardware limit for this workload. Further knob-twiddling is noise; the real lever is different hardware or more instances.
 - **Ignoring quality when quantizing / speculating.** [Quantization](../part4/quantization-methods.md) and speculative decoding raise decode goodput but can move quality; validate on your [eval set](../eval/index.md), not just the latency numbers.
+- **Cranking `--max-num-seqs` past the token budget.** `SchedulerConfig` (`vllm/config/scheduler.py`) validates `max_num_batched_tokens ≥ max_num_seqs` — so pushing the decode knob (`--max-num-seqs`) above `--max-num-batched-tokens` isn't "more concurrency," it's a **startup error**. If you raise `max_num_seqs`, raise the token budget with it; the two knobs are coupled, not independent.
 
 ## 7 · Interview links
 
@@ -170,6 +199,7 @@ Further reading:
 - The [load-testing lesson](load-testing-knee.md) — the knee and goodput this loop optimizes against.
 - The [observability lesson](observability-profiling.md) — the metrics that reveal the binding constraint.
 - vLLM `docs/configuration/optimization.md` — `max_num_batched_tokens` and the chunked-prefill TTFT/throughput trade.
+- vLLM source (v0.26.0): [`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py) (`max_num_seqs` / `max_num_batched_tokens` + the `≥` validator), [`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py) (`gpu_memory_utilization`), [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) (goodput), [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) (the constraint gauges) — the knob-fields + score + signals from §3.5.
 
 ## 9 · Self-check
 

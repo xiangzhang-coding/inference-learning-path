@@ -40,6 +40,25 @@ SLO 在延迟/吞吐平面上圈出一个**目标框**。调优 = 在框*内*把
      KV 满 (gpu_cache_usage_perc→1.0)          → --gpu-memory-utilization↑、--max-model-len↓、KV 量化
 ```
 
+上面的 SLO box 是空间草图（ASCII，按 ADR-0005）。而循环每轮跑的*诊断→旋钮*决策是一棵决策树，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    M["read /metrics: which constraint binds now?"] --> Q{"num_requests_waiting deep?"}
+    Q -->|"yes"| CAP["NOT a tuning problem: add replicas / route<br/>(past the knee — capacity)"]
+    Q -->|"no"| P{"prefill time / TTFT high?"}
+    P -->|"yes"| PK["--max-num-batched-tokens (smaller) · --enable-prefix-caching"]
+    P -->|"no"| D{"decode time / TPOT high?"}
+    D -->|"yes"| DK["--max-num-seqs · quantization · speculative decoding"]
+    D -->|"no"| K{"gpu_cache_usage_perc near 1.0?"}
+    K -->|"yes"| KK["--gpu-memory-utilization up · --max-model-len down · KV quant"]
+    K -->|"no"| DONE["at the hardware limit — stop tuning"]
+    PK --> RE["re-measure goodput, keep if better, then one more knob"]
+    DK --> RE
+    KK --> RE
+    RE --> M
+```
+
 三个要记住的形状：
 
 - **SLO 先行；goodput 是分。** 没有目标你无法说一个配置「更好」——一个轴更快总意味另一个轴更慢。SLO 把多目标混乱收成一个数：框内的 goodput。
@@ -78,6 +97,15 @@ SLO 在延迟/吞吐平面上圈出一个**目标框**。调优 = 在框*内*把
 ### 3.4 闭环
 
 **定义 SLO → 测 goodput（`vllm bench serve`）→ 从 `/metrics` 诊断绑定约束 → 拧那一个对症旋钮 → 重测。** 只在一个配置*抬高 goodput 且仍满足 SLO* 时保留它。当 goodput 走平就停——你撞上了这个 workload 在这硬件上的真实极限，更多收益需要不同硬件或更多副本。关键：对着匹配生产的 workload（输入/输出长度分布）调；512-in/128-out 的获胜配置不是 4k-in/1k-out 的获胜者。
+
+### 3.5 在 vLLM 源码里读它（v0.26.0）
+
+这个循环读的是你已见过的代码——没有新东西要造（ADR-0002：读懂 + 会推，不重写）：
+
+- **旋钮都是 dataclass 字段**，所以「转一个旋钮」就是「设一个字段」：**`SchedulerConfig`**（[`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)）上的 `max_num_seqs` 与 `max_num_batched_tokens`，**`CacheConfig`** / 模型配置（[`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)）上的 `gpu_memory_utilization`（默认 `0.92`）与 `max_model_len`。`SchedulerConfig` 甚至校验跨旋钮规则 `max_num_batched_tokens ≥ max_num_seqs`，所以非法组合会在启动时报错、而非默默出错。
+- **打分与诊断就是前两节的代码**：goodput 来自 [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) 的 `calculate_metrics` / `request_goodput`，绑定约束的信号由 [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) 里的 `PrometheusStatLogger` 声明——计数用 **gauge**（`vllm:num_requests_waiting`、`gpu_cache_usage_perc`），耗时用 **histogram**（prefill/decode）。
+
+所以循环就是：读一个 gauge（`loggers.py`）、设一个 config 字段（`scheduler.py`/`cache.py`）、用 `serve.py` 重新打分。没有「tuner」模块——纪律在你手里；引擎只暴露字段和数字。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -154,6 +182,7 @@ print(f"\n最优 --max-num-seqs = {best[1]}，goodput {best[0]:.2f} req/s（示�
 - **在错的 workload 上调。** 短 prompt 的获胜配置在长 prompt 上输（prefill- vs decode-heavy 饱和不同资源）。对着匹配生产的 prompt/长度分布调。
 - **越过平台还追。** goodput 不再改善时，你撞上了这个 workload 的硬件极限。再拧是噪声；真杠杆是不同硬件或更多实例。
 - **量化/投机时无视质量。** [量化](../part4/quantization-methods.md)与投机解码抬高 decode goodput，但可能移动质量；在你的[评测集](../eval/index.md)上验证，别只看延迟数。
+- **把 `--max-num-seqs` 顶过 token 预算。** `SchedulerConfig`（`vllm/config/scheduler.py`）校验 `max_num_batched_tokens ≥ max_num_seqs`——所以把 decode 旋钮（`--max-num-seqs`）顶到 `--max-num-batched-tokens` 之上不是「更多并发」，而是一个**启动错误**。你抬 `max_num_seqs` 就得同时抬 token 预算；这两个旋钮是耦合的，不独立。
 
 ## 7 · 面试连线
 
@@ -169,6 +198,7 @@ print(f"\n最优 --max-num-seqs = {best[1]}，goodput {best[0]:.2f} req/s（示�
 - [压测那节](load-testing-knee.md) —— 这个闭环优化对象的 knee 与 goodput。
 - [可观测性那节](observability-profiling.md) —— 揭示绑定约束的指标。
 - vLLM `docs/configuration/optimization.md` —— `max_num_batched_tokens` 与 chunked-prefill 的 TTFT/吞吐权衡。
+- vLLM 源码（v0.26.0）：[`vllm/config/scheduler.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/scheduler.py)（`max_num_seqs` / `max_num_batched_tokens` + `≥` 校验）、[`vllm/config/cache.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/cache.py)（`gpu_memory_utilization`）、[`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py)（goodput）、[`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py)（约束 gauge）——§3.5 的旋钮字段 + 打分 + 信号。
 
 ## 9 · 自测小问
 

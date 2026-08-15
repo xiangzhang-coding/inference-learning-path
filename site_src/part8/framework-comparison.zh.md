@@ -41,6 +41,25 @@
    按约束选、不按排名——再在你的 workload 上压测确认。
 ```
 
+上面的 portability↔peak 轴是一张定位布局（ASCII，按 ADR-0005）。而*选型决策*——default X、遇约束 Z 就切 Y——是一棵决策树，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    START["choose a serving engine"] --> Q1{"model changes often, or mixed / non-NVIDIA hardware?"}
+    Q1 -->|"yes"| VLLM["default: vLLM<br/>(breadth, velocity, HW flexibility)"]
+    Q1 -->|"no"| Q2{"fixed model on NVIDIA, need the latency floor?"}
+    Q2 -->|"yes"| TRT["TensorRT-LLM<br/>(ahead-of-time compiled engine)"]
+    Q2 -->|"no"| Q3{"dominant workload / ecosystem?"}
+    Q3 -->|"shared-prefix / agentic"| SG["SGLang (RadixAttention)"]
+    Q3 -->|"HuggingFace-native"| TGI["TGI"]
+    Q3 -->|"weight-only quant on NVIDIA"| LM["LMDeploy (TurboMind)"]
+    VLLM --> BENCH["confirm: benchmark candidates OpenAI-compatibly at your SLO"]
+    TRT --> BENCH
+    SG --> BENCH
+    TGI --> BENCH
+    LM --> BENCH
+```
+
 三个要记住的形状：
 
 - **基线共享；在边缘上争。** 若一个候选人说不清什么是*标配*（continuous batching、paged KV、OpenAI API），他会为一个人人都有的特性过度加分。真正的差异在边缘：提前编译 vs 动态运行、前缀缓存策略、量化深度、硬件。
@@ -76,6 +95,15 @@
 ### 3.4 诚实的决胜：自己测
 
 定位缩小了候选；**你的 workload 选出赢家。** 既然每个都暴露 OpenAI 兼容 endpoint，把同一模型在两个候选上服务，对每个 `--base-url` 跑*同一* `vllm bench serve`、在你的 SLO 下、你的 prompt 分布上。比 **goodput**（[SLO 调优](slo-driven-tuning.md)的分），不是厂商博客数字。这也中和了版本漂移——你测的是今天真会部署的东西。
+
+### 3.5 在 vLLM 源码里读它（v0.26.0）
+
+其他引擎的内部不在 vLLM 树里——但*让它们可比的那个东西*在，值得一读（ADR-0002：读懂 + 会推，不重写）：
+
+- **`vllm bench serve` 是协议客户端，不是 vLLM 客户端。** 在 [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) 里，backend 是一次*分发*：它从 [`vllm/benchmarks/lib/endpoint_request_func.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/lib/endpoint_request_func.py) 导入 **`ASYNC_REQUEST_FUNCS`**，取 `request_func = ASYNC_REQUEST_FUNCS[endpoint_type]`。`openai` 那一项只是对着一个 `--base-url` 说 OpenAI HTTP 协议，所以*同一*套 harness 能驱动 vLLM、TGI、SGLang、LMDeploy、或一个 TensorRT-LLM 的 OpenAI 前端——§3.4 的 apples-to-apples 对比就是这一次字典查找。
+- **一切 vLLM 独有的东西都在 Part 5–7**，不在这里：PagedAttention（`vllm/v1/core/`）、continuous batching（scheduler）、prefix caching、TP/PP。本节的活是*定位* + 中立 harness；差异化就是你已读过的那些代码。
+
+打开 `endpoint_request_func.py` 看那个 backend 注册表——这一套 benchmark 能说的协议集合，就是它的 key。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -135,6 +163,7 @@ done
 - **为标配给框架加分。** continuous batching、paged KV、prefix caching、OpenAI API 现在近乎通用。差异化在边缘（提前编译、RadixAttention、量化深度、硬件），不在人人都有的特性。
 - **无视版本漂移。** 这些项目每月在动；你「知道」的能力差距可能已合上。投入前对照*当前*文档核实——更好是测你会部署的版本。
 - **低估运维契合。** 模型覆盖、硬件、你团队的栈（HF？仅 NVIDIA？）、量化支持，常比 10% 延迟差更重要。为整个系统选、不为一个数。
+- **跨不匹配的 endpoint 比较。** harness 按 `endpoint_type` 选客户端（`serve.py` 里的 `ASYNC_REQUEST_FUNCS[endpoint_type]`），而 `--endpoint /v1/completions` 与 `/v1/chat/completions` 是*不同的 request function*、载荷与模板都不同。一个 backend 用 `/v1/completions`、另一个用 `/v1/chat/completions`——或换了数据集/长度分布——即便都「用 `vllm bench serve`」也是 apples-to-oranges。对所有候选固定 endpoint、数据集与速率。
 
 ## 7 · 面试连线
 
@@ -150,6 +179,7 @@ done
 - [SLO 调优那节](slo-driven-tuning.md) —— goodput，你对比框架用的分。
 - [压测那节](load-testing-knee.md) —— 能压测任意 OpenAI 兼容后端的 `vllm bench serve` harness。
 - Part [5](../part5/index.md)–[7](../part7/index.md) —— 这些引擎都实现的共同基线特性（continuous batching、PagedAttention、prefix caching、并行）。
+- vLLM 源码（v0.26.0）：[`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) + [`vllm/benchmarks/lib/endpoint_request_func.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/lib/endpoint_request_func.py)（`ASYNC_REQUEST_FUNCS`——`--backend openai` 分发，让任何 OpenAI-compatible server 可压测）——§3.5 的中立 harness。
 
 ## 9 · 自测小问
 

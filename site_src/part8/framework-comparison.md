@@ -41,6 +41,25 @@ They mostly agree on the fundamentals; they differ on a few axes. Place each by 
    CHOOSE BY CONSTRAINT, NOT BY RANK — then confirm by benchmarking on YOUR workload.
 ```
 
+The portability↔peak axis above is a positioning layout (ASCII per ADR-0005). The *selection decision* — default X, switch to Y when constraint Z — is a decision tree, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    START["choose a serving engine"] --> Q1{"model changes often, or mixed / non-NVIDIA hardware?"}
+    Q1 -->|"yes"| VLLM["default: vLLM<br/>(breadth, velocity, HW flexibility)"]
+    Q1 -->|"no"| Q2{"fixed model on NVIDIA, need the latency floor?"}
+    Q2 -->|"yes"| TRT["TensorRT-LLM<br/>(ahead-of-time compiled engine)"]
+    Q2 -->|"no"| Q3{"dominant workload / ecosystem?"}
+    Q3 -->|"shared-prefix / agentic"| SG["SGLang (RadixAttention)"]
+    Q3 -->|"HuggingFace-native"| TGI["TGI"]
+    Q3 -->|"weight-only quant on NVIDIA"| LM["LMDeploy (TurboMind)"]
+    VLLM --> BENCH["confirm: benchmark candidates OpenAI-compatibly at your SLO"]
+    TRT --> BENCH
+    SG --> BENCH
+    TGI --> BENCH
+    LM --> BENCH
+```
+
 Three shapes to keep:
 
 - **The baseline is shared; fight over the edges.** If a candidate can't articulate what's *table stakes* (continuous batching, paged KV, OpenAI API), they'll over-credit a framework for a feature everyone has. The real differences are at the edges: compile-ahead vs run-dynamic, prefix-cache strategy, quantization depth, hardware.
@@ -76,6 +95,15 @@ State it as *"default X, switch to Y when constraint Z"* — that's the shape in
 ### 3.4 The honest tiebreaker: benchmark them yourself
 
 Positioning narrows the field; **your workload picks the winner.** Since each exposes OpenAI-compatible endpoints, serve the same model on two candidates and run the *same* `vllm bench serve` against each `--base-url`, at your SLO, on your prompt mix. Compare **goodput** (the [SLO-tuning](slo-driven-tuning.md) score), not vendor blog numbers. This also neutralizes version drift — you're measuring what you'd actually deploy, today.
+
+### 3.5 Reading it in vLLM's source (v0.26.0)
+
+The other engines' internals aren't in vLLM's tree — but the *thing that makes them comparable* is, and it's worth reading (ADR-0002: read + reason, don't rewrite):
+
+- **`vllm bench serve` is a protocol client, not a vLLM client.** In [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) the backend is a *dispatch*: it imports **`ASYNC_REQUEST_FUNCS`** from [`vllm/benchmarks/lib/endpoint_request_func.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/lib/endpoint_request_func.py) and picks `request_func = ASYNC_REQUEST_FUNCS[endpoint_type]`. The `openai` entry just speaks the OpenAI HTTP protocol at a `--base-url`, so the *same* harness drives vLLM, TGI, SGLang, LMDeploy, or a TensorRT-LLM OpenAI frontend — the apples-to-apples comparison of §3.4 is this one dictionary lookup.
+- **Everything vLLM-specific is Parts 5–7**, not here: PagedAttention (`vllm/v1/core/`), continuous batching (the scheduler), prefix caching, TP/PP. This lesson's job is *positioning* + the neutral harness; the differentiators are the code you already read.
+
+Open `endpoint_request_func.py` to see the backend registry — the set of protocols the one benchmark can speak is literally its keys.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -135,6 +163,7 @@ Steps:
 - **Crediting a framework for table stakes.** Continuous batching, paged KV, prefix caching, OpenAI API are near-universal now. Differentiators live at the edges (compile-ahead, RadixAttention, quant depth, HW), not in features everyone ships.
 - **Ignoring version drift.** These projects move monthly; a capability gap you "know" may have closed. Verify each against its *current* docs before committing — and prefer measuring the versions you'd deploy.
 - **Underweighting operational fit.** Model coverage, hardware, your team's stack (HF? NVIDIA-only?), and quantization support often matter more than a 10% latency delta. Pick for the whole system, not one number.
+- **Comparing across mismatched endpoints.** The harness keys its client off `endpoint_type` (`ASYNC_REQUEST_FUNCS[endpoint_type]` in `serve.py`), and `--endpoint /v1/completions` vs `/v1/chat/completions` are *different request functions* with different payloads and templating. Benchmarking one backend on `/v1/completions` and another on `/v1/chat/completions` — or with a different dataset/length mix — is apples-to-oranges even though both "use `vllm bench serve`". Fix the endpoint, dataset, and rate across all candidates.
 
 ## 7 · Interview links
 
@@ -150,6 +179,7 @@ Further reading:
 - The [SLO-tuning lesson](slo-driven-tuning.md) — goodput, the score you compare frameworks on.
 - The [load-testing lesson](load-testing-knee.md) — the `vllm bench serve` harness that benchmarks any OpenAI-compatible backend.
 - Parts [5](../part5/index.md)–[7](../part7/index.md) — the shared-baseline features (continuous batching, PagedAttention, prefix caching, parallelism) these engines all implement.
+- vLLM source (v0.26.0): [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) + [`vllm/benchmarks/lib/endpoint_request_func.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/lib/endpoint_request_func.py) (`ASYNC_REQUEST_FUNCS` — the `--backend openai` dispatch that makes any OpenAI-compatible server benchmarkable) — the neutral harness from §3.5.
 
 ## 9 · Self-check
 

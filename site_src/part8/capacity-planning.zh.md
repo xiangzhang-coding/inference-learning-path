@@ -39,6 +39,19 @@
         r_inst = (output tok/s) / (每请求平均 output token 数)
 ```
 
+上面的两门槛公式是空间 + 定量图（ASCII，按 ADR-0005）。而*定容流程*——先可行性、再两门槛、再一次除法——是一条流程，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    SLO["SLO: peak QPS + p99 TPOT"] --> F{"TPOT floor (weights / eff-bandwidth) at or below SLO TPOT?"}
+    F -->|"no"| FIX["INFEASIBLE: quantize weights or faster HW<br/>(scaling can't lower single-stream latency)"]
+    F -->|"yes"| MEM["memory gate: how many streams FIT (Part 2 KV math)"]
+    MEM --> SPD["speed gate: measure knee output tok/s (vllm bench serve)"]
+    SPD --> RINST["r_inst = out tok/s / mean output tokens = min(fits, fast)"]
+    RINST --> FLEET["N_inst = ceil(peak QPS / (headroom x r_inst))"]
+    FLEET --> GPU["N_GPU = N_inst x TP"]
+```
+
 三个要记住的形状：
 
 - **实例容量是 `min(装得下, 跑得快)`。** [显存闸](../part2/kv-cache-math.md) 说能装多少序列；速度闸说 GPU 抽干这个 batch 有多快。只看一边就会撒谎：一个能*装下* 66 条流、但在你的 TPOT 下只*解码*得动 30 条的配置，就是个 30 条流的实例。绑定的那个才是真实容量。
@@ -92,6 +105,15 @@ N_{\text{inst}} = \left\lceil \frac{50}{0.7\times7.8} \right\rceil = \lceil 9.2 
 $$
 
 注意每个数字的作用：量化权重把*两个*闸都抬高（腾出 VRAM → 装得下更大 batch，且缩小 $W$ → 更高 $T_{\text{out}}$、更低 TPOT 地板），这正是它在 [Part 2](../part2/kv-cache-math.md) *和*这里都是第一杠杆的原因。$\bar{o}$ 减半（更短输出）会让 $r_{\text{inst}}$ 翻倍、集群减半。所有数字为示例——在你的 workload 上测 $T_{\text{out}}$ 和 $\bar{o}$。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+*显存门槛*不是你算一次的公式——vLLM 在启动时**实测**它，读那个比纸面估计更值（ADR-0002：读懂 + 会推，不重写）：
+
+- **「能装几个」是测出来的，不是推出来的。** [`vllm/v1/worker/gpu_worker.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_worker.py) 里的 `GPUWorker.determine_available_memory` 跑一次 profiling 前向，扣掉权重 + 激活峰值，（遵守 `gpu_memory_utilization`）设出 `available_kv_cache_memory_bytes`。它喂给 [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) 的 `check_enough_kv_cache_memory` / `get_num_blocks` / `get_kv_cache_configs`，产出 **`num_gpu_blocks`**——vLLM 启动日志里的 block 数。那个日志数*就是* §3 的显存门槛，且已扣掉纸面数学略过的激活/碎片。
+- **fleet 的乘子是配置。** $N_{\text{GPU}}=N_{\text{inst}}\times\text{TP}$ 里的 `× TP` 是 **`ParallelConfig`**（[`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py)）上的 `tensor_parallel_size`；速度门槛（knee tok/s）是用 `vllm bench serve` *测*出来的，不是从某个符号读的。
+
+先打开 `gpu_worker.py` 的 `determine_available_memory`——它就是把「24 GB 卡」变成「这么多 KV block」的 profiling 步骤，你的 planner 该消费的 ground truth。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -178,6 +200,7 @@ if __name__ == "__main__":
 - **算了速度闸却忘了显存闸。** 纸上 decode 得飞快的 batch 仍得*装进* [KV 预算](../part2/kv-cache-math.md)。真实单实例容量是 `min(装得下, 跑得快)`；两个都查。
 - **忽略 prefill。** 这些估算是 decode 为中心的。prefill 重的 workload（长 prompt、短答）是 TTFT/compute-bound，不是 decode-bound——它的 knee 由 prefill 决定，[chunked prefill](../part5/scheduler-chunked-prefill-pd.md) / prefix caching 会移动它。按你真实的输入/输出配比定容。
 - **对可变输出长度做点估计。** $\bar{o}$ 是个均值；长尾的长生成会吃 KV、拉低有效 $r_{\text{inst}}$。用分布（或 p90 长度）来规划，别只用平均。
+- **手推显存门槛而不看日志。** §4 的 planner 估「能装几个」，但 vLLM 已经*实测*了它：`determine_available_memory`（`gpu_worker.py`）→ `num_gpu_blocks`（`kv_cache_utils.py`），启动时打日志。那个实测数扣掉了你公式略过的激活峰值与碎片，所以通常**低于**纸面值。拿你 planner 的显存门槛对着 server 实际日志的 `num_gpu_blocks` 校验；差得多就信日志。
 
 ## 7 · 面试连线
 
@@ -194,6 +217,7 @@ if __name__ == "__main__":
 - [roofline 课](../part2/roofline-analysis.md) —— 为何 decode 是 memory-bound，TPOT 地板的前提。
 - [路由与自动扩缩课](routing-autoscaling.md) —— 你在这里定容的集群是怎么真正跑起来的（router、前缀感知路由、按队列自动扩缩）。
 - vLLM `docs/serving/parallelism_scaling.md` —— 单卡 → TP（节点内）→ TP×PP（跨节点），$N_{\text{GPU}}=N_{\text{inst}}\times\text{TP}$ 背后的规则。
+- vLLM 源码（v0.26.0）：[`vllm/v1/worker/gpu_worker.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_worker.py)（`determine_available_memory`——profiling 步骤）、[`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py)（`get_num_blocks` → 日志里的 `num_gpu_blocks` 显存门槛）、[`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py)（`tensor_parallel_size`）——§3.4 的门槛 + fleet 乘子。
 
 ## 9 · 自测小问
 

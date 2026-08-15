@@ -39,6 +39,19 @@ One instance has **two independent ceilings**; its real capacity is the *lower* 
         r_inst = (output tok/s) / (mean output tokens per request)
 ```
 
+The two-gates formula above is spatial + quantitative (ASCII per ADR-0005). The *sizing procedure* — feasibility first, then the two gates, then the division — is a flow, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    SLO["SLO: peak QPS + p99 TPOT"] --> F{"TPOT floor (weights / eff-bandwidth) at or below SLO TPOT?"}
+    F -->|"no"| FIX["INFEASIBLE: quantize weights or faster HW<br/>(scaling can't lower single-stream latency)"]
+    F -->|"yes"| MEM["memory gate: how many streams FIT (Part 2 KV math)"]
+    MEM --> SPD["speed gate: measure knee output tok/s (vllm bench serve)"]
+    SPD --> RINST["r_inst = out tok/s / mean output tokens = min(fits, fast)"]
+    RINST --> FLEET["N_inst = ceil(peak QPS / (headroom x r_inst))"]
+    FLEET --> GPU["N_GPU = N_inst x TP"]
+```
+
 Three shapes to hold:
 
 - **An instance's capacity is `min(fits, fast)`.** The [memory gate](../part2/kv-cache-math.md) says how many sequences fit; the speed gate says how fast the GPU drains that batch. Sizing on one alone lies: a config that *fits* 66 streams but only *decodes* fast enough for 30 at your TPOT is a 30-stream instance. The binding one is your real capacity.
@@ -92,6 +105,15 @@ N_{\text{inst}} = \left\lceil \frac{50}{0.7\times7.8} \right\rceil = \lceil 9.2 
 $$
 
 Note what each number does: quantizing weights lifts *both* gates (frees VRAM → bigger batch fits, and shrinks $W$ → higher $T_{\text{out}}$ and lower TPOT floor), which is why it's the first lever in [Part 2](../part2/kv-cache-math.md) *and* here. Halving $\bar{o}$ (shorter outputs) doubles $r_{\text{inst}}$ and halves the fleet. All figures illustrative — measure $T_{\text{out}}$ and $\bar{o}$ on your workload.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+The *memory gate* isn't a formula you compute once — vLLM **profiles** it at startup, and reading that is worth more than the napkin estimate (ADR-0002: read + reason, don't rewrite):
+
+- **The "how many fit" number is measured, not derived.** `GPUWorker.determine_available_memory` in [`vllm/v1/worker/gpu_worker.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_worker.py) runs a profiling forward pass, subtracts weights + activation peak, and (respecting `gpu_memory_utilization`) sets `available_kv_cache_memory_bytes`. That feeds `check_enough_kv_cache_memory` / `get_num_blocks` / `get_kv_cache_configs` in [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) to produce **`num_gpu_blocks`** — the block count vLLM logs at startup. That logged number *is* your §3 memory gate, already net of activation/fragmentation the pen-and-paper math skips.
+- **The fleet multiplier is config.** The `× TP` in $N_{\text{GPU}}=N_{\text{inst}}\times\text{TP}$ is `tensor_parallel_size` on **`ParallelConfig`** ([`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py)); the speed gate (knee tok/s) is *measured* with `vllm bench serve`, not read from a symbol.
+
+Open `gpu_worker.py`'s `determine_available_memory` first — it's the profiling pass that turns "24 GB card" into "this many KV blocks," the ground truth your planner should consume.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -178,6 +200,7 @@ Steps:
 - **Estimating the speed gate but forgetting the memory gate.** A batch that decodes fast on paper still has to *fit* in the [KV budget](../part2/kv-cache-math.md). Real per-instance capacity is `min(fits, fast)`; check both.
 - **Ignoring prefill.** These estimates are decode-centric. A prefill-heavy workload (long prompts, short answers) is TTFT/compute-bound, not decode-bound — its knee is set by prefill, and [chunked prefill](../part5/scheduler-chunked-prefill-pd.md) / prefix caching move it. Size against your real input/output split.
 - **Point-estimating variable output length.** $\bar{o}$ is a mean; a heavy tail of long generations eats KV and lowers effective $r_{\text{inst}}$. Plan with the distribution (or a p90 length), not just the average.
+- **Hand-deriving the memory gate instead of reading the log.** The §4 planner estimates "how many fit," but vLLM already *profiles* it: `determine_available_memory` (`gpu_worker.py`) → `num_gpu_blocks` (`kv_cache_utils.py`), logged at startup. That measured number nets out the activation peak and fragmentation your formula omits, so it's usually **lower** than the napkin figure. Sanity-check your planner's memory gate against the server's actual logged `num_gpu_blocks`; if they diverge a lot, trust the log.
 
 ## 7 · Interview links
 
@@ -194,6 +217,7 @@ Further reading:
 - The [roofline lesson](../part2/roofline-analysis.md) — why decode is memory-bound, the premise behind the TPOT floor.
 - The [routing & autoscaling lesson](routing-autoscaling.md) — how the fleet you sized here is actually run (router, prefix-aware routing, queue-based autoscaling).
 - vLLM `docs/serving/parallelism_scaling.md` — single-GPU → TP (within a node) → TP×PP (across nodes), the rule behind $N_{\text{GPU}}=N_{\text{inst}}\times\text{TP}$.
+- vLLM source (v0.26.0): [`vllm/v1/worker/gpu_worker.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/worker/gpu_worker.py) (`determine_available_memory` — the profiling pass), [`vllm/v1/core/kv_cache_utils.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/core/kv_cache_utils.py) (`get_num_blocks` → the logged `num_gpu_blocks` memory gate), [`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py) (`tensor_parallel_size`) — the §3.4 gates + fleet multiplier.
 
 ## 9 · Self-check
 
