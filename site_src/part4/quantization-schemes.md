@@ -1,7 +1,7 @@
 # Quantization Choices: Granularity, Symmetry, What to Quantize, and PTQ vs QAT
 
 !!! info "Baseline: **vLLM 0.26.0** · model `Qwen2.5-7B-Instruct` · single RTX 4090 (24 GB)"
-    vLLM's quantization naming used here — the `WxAy` scheme (e.g. `W4A16`, `W8A8`), `LLM(..., quantization="fp8")` / `vllm serve --quantization fp8`, and that dynamic FP8 quantizes Linear weights per-tensor while scaling activations dynamically per-tensor — is verified against vLLM 0.26.0 via Context7 (ADR-0004). The granularity/symmetry demos in §4 are **pure-Python math**, offline; error bounds (`≤ step/2`) are exact. Any accuracy/size figures are **illustrative / order-of-magnitude references**. Concrete method families (GPTQ/AWQ/SmoothQuant/…) and the hands-on `Qwen2.5-7B` INT4 run are **#11**.
+    vLLM's quantization naming used here — the `WxAy` scheme (e.g. `W4A16`, `W8A8`), `LLM(..., quantization="fp8")` / `vllm serve --quantization fp8`, and that dynamic FP8 quantizes Linear weights per-tensor while scaling activations dynamically per-tensor — is verified against vLLM 0.26.0 via Context7 (ADR-0004). The granularity/symmetry demos in §4 are **pure-Python math**, offline; error bounds (`≤ step/2`) are exact. Any accuracy/size figures are **illustrative / order-of-magnitude references**. Concrete method families (GPTQ/AWQ/SmoothQuant/…) and the hands-on `Qwen2.5-7B` INT4 run are the [method-families lesson](quantization-methods.md) and the [hands-on lab](quantization-lab.md).
 
 ---
 
@@ -52,7 +52,7 @@ Zooming in on **granularity** — the highest-leverage choice — as a spatial t
 Two shapes to hold:
 
 - **Finer granularity buys accuracy with a little storage.** Splitting one scale into many shrinks the range each must cover, so a channel-local or group-local outlier no longer coarsens the whole tensor. The cost is more stored scales (higher effective bits) and slightly more complex kernels — a real but usually cheap trade.
-- **"What to quantize" decides whether you win memory or compute.** Weight-only (`W4A16`) cuts HBM traffic → faster memory-bound *decode*, and it's easy because weights are static and well-behaved. Weight+activation (`W8A8`) also cuts *compute* via INT8 tensor cores, but activations are dynamic and outlier-prone, so it needs extra tricks (the method families in #11).
+- **"What to quantize" decides whether you win memory or compute.** Weight-only (`W4A16`) cuts HBM traffic → faster memory-bound *decode*, and it's easy because weights are static and well-behaved. Weight+activation (`W8A8`) also cuts *compute* via INT8 tensor cores, but activations are dynamic and outlier-prone, so it needs extra tricks (the [method families](quantization-methods.md)).
 
 ## 3 · Principle & the four choices
 
@@ -68,8 +68,8 @@ Recall error $\le (h-\ell)/(2(2^b-1))$: it's driven by the *range each scale cov
 
 vLLM names schemes `WxAy` = $x$-bit weights, $y$-bit activations:
 
-- **Weight-only** (`W4A16`, `W8A16`): quantize weights, keep activations in FP16. Weights are **dequantized to FP16 on-chip** and the matmul runs in FP16 — so the win is **HBM bandwidth** (fewer weight bytes → faster memory-bound *decode*), not FLOPs. Easy and popular because weights are static and near-symmetric; this is the AWQ/GPTQ INT4 regime (#11).
-- **Weight+activation** (`W8A8`): quantize both, so the matmul runs on **INT8 tensor cores** — a genuine **compute** speedup on top of the memory win, valuable for compute-bound *prefill* and large batches. The catch: activations are computed at runtime and have large outliers, so naive `W8A8` loses accuracy — hence SmoothQuant (migrate outliers weight-ward) and friends (#11). vLLM's dynamic **FP8** path is a middle ground: it quantizes Linear weights per-tensor and scales activations *dynamically per-tensor* each forward pass (no calibration needed), trading some latency benefit for accuracy.
+- **Weight-only** (`W4A16`, `W8A16`): quantize weights, keep activations in FP16. Weights are **dequantized to FP16 on-chip** and the matmul runs in FP16 — so the win is **HBM bandwidth** (fewer weight bytes → faster memory-bound *decode*), not FLOPs. Easy and popular because weights are static and near-symmetric; this is the AWQ/GPTQ INT4 regime.
+- **Weight+activation** (`W8A8`): quantize both, so the matmul runs on **INT8 tensor cores** — a genuine **compute** speedup on top of the memory win, valuable for compute-bound *prefill* and large batches. The catch: activations are computed at runtime and have large outliers, so naive `W8A8` loses accuracy — hence SmoothQuant (migrate outliers weight-ward) and friends. vLLM's dynamic **FP8** path is a middle ground: it quantizes Linear weights per-tensor and scales activations *dynamically per-tensor* each forward pass (no calibration needed), trading some latency benefit for accuracy.
 - **KV-cache quantization** is a separate axis — quantize the stored [KV cache](../part0/kv-cache.md) to fit more sequences (helps the [VRAM budget](../interview/vram-capacity-planning.md)); it's orthogonal to weight/activation quant.
 
 ### 3.4 PTQ vs QAT
@@ -141,7 +141,7 @@ The numeric lab is the sweep above (try per-group by slicing each row into block
 
 ```python title="scheme_names.py"
 # vLLM expresses "what to quantize" as WxAy, and picks methods via `quantization=`.
-# (Names/flags verified against vLLM 0.26.0; running them is #11's hands-on lesson.)
+# (Names/flags verified against vLLM 0.26.0; running them is the hands-on lab.)
 schemes = {
     "W4A16": "4-bit weights, 16-bit activations  -> weight-only; memory/decode win (AWQ/GPTQ INT4)",
     "W8A8":  "8-bit weights, 8-bit activations   -> INT8 tensor cores; compute win, needs outlier handling",
@@ -152,7 +152,7 @@ for name, note in schemes.items():
 # In vLLM:  LLM(model, quantization="fp8")   or   vllm serve <model> --quantization fp8
 ```
 
-**What to observe:** the `WxAy` name tells you immediately whether a method is a memory play (`W4A16`, activations untouched) or a compute play (`W8A8`, both quantized). Map any method you meet in #11 onto the four choices — its bit-widths (what to quantize), its granularity, its symmetry, and that it's PTQ — and you can reason about its accuracy/speed profile without memorizing it. Actually *running* `--quantization` on `Qwen2.5-7B` is the [#11 hands-on lesson](index.md).
+**What to observe:** the `WxAy` name tells you immediately whether a method is a memory play (`W4A16`, activations untouched) or a compute play (`W8A8`, both quantized). Map any method you meet in the [method families](quantization-methods.md) onto the four choices — its bit-widths (what to quantize), its granularity, its symmetry, and that it's PTQ — and you can reason about its accuracy/speed profile without memorizing it. Actually *running* `--quantization` on `Qwen2.5-7B` is the [hands-on lab](quantization-lab.md).
 
 ## 6 · Common pitfalls / counter-intuitive points
 
@@ -161,7 +161,7 @@ for name, note in schemes.items():
 - **Treating `W8A8` as "just more quantization than `W4A16`".** They optimize different things: `W4A16` is a *memory/decode* win (activations stay FP16); `W8A8` is a *compute* win (INT8 tensor cores) but must tame activation outliers. More quantized ≠ strictly better — it's a different trade.
 - **Reaching for QAT to deploy.** QAT needs the training pipeline and is rarely worth it for serving; PTQ (± calibration) is the inference default. Use QAT only when PTQ can't hold quality at your target bits.
 - **Assuming finer granularity is free.** More scales = higher effective bits and sometimes slower kernels. Per-group ~128 is the usual sweet spot, not per-element.
-- **Forgetting activations are the hard part.** Weights are static and near-symmetric (easy); activations are dynamic and outlier-heavy (hard). That asymmetry is why weight-only quant is so popular and why activation quant needs SmoothQuant-style tricks (#11).
+- **Forgetting activations are the hard part.** Weights are static and near-symmetric (easy); activations are dynamic and outlier-heavy (hard). That asymmetry is why weight-only quant is so popular and why activation quant needs SmoothQuant-style tricks.
 - **Static vs dynamic activation scales — a hidden axis.** Beyond symmetry, an activation scale can be computed *statically* (once, from calibration) or *dynamically* (recomputed each forward pass). Because activations swing hard with the input, dynamic scaling usually holds accuracy better — vLLM's FP8 path scales activations *dynamically per-tensor* each forward (no calibration), and some `W8A8` pipelines go finer with *per-token* scales. Static is simpler/faster but assumes a stable distribution, so off-distribution traffic bites. Not universal — static wins where kernel simplicity or fixed scales matter.
 
 ## 7 · Interview links
@@ -175,7 +175,7 @@ for name, note in schemes.items():
 Further reading:
 
 - The [Quantization Basics](quantization-basics.md) lesson — the affine map and error bound these choices tune.
-- Next (#11): the method families — **GPTQ, AWQ, SmoothQuant, FP8, LLM.int8()** — as concrete points in this design space, plus the hands-on `Qwen2.5-7B` → INT4 run in vLLM.
+- Next: the method families — **GPTQ, AWQ, SmoothQuant, FP8, LLM.int8()** — as concrete points in this design space, plus the hands-on `Qwen2.5-7B` → INT4 run in vLLM.
 - *SmoothQuant* (Xiao et al.) — migrating activation outliers into weights to make `W8A8` work; the clearest motivation for the "activations are the hard part" pitfall.
 
 ## 9 · Self-check

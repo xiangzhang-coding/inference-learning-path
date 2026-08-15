@@ -18,5 +18,5 @@ The hardware primer this builds on — the [memory hierarchy & roofline](../part
 - **[FlashAttention: the IO-aware Attention Kernel](flash-attention.md)** — tile Q/K/V and use online softmax to keep the $S\times S$ scores in SRAM, turning $O(S^2)$ HBM traffic into $O(S)$ while computing the exact same output.
 - **[Kernel Fusion & CUDA Graphs: Killing Decode Launch Overhead](kernel-fusion-cuda-graphs.md)** — why hundreds of tiny decode kernels make the step launch-bound, and how fusion and CUDA-graph replay collapse the overhead.
 
-!!! note "Scaffolding status"
-    Part 2 is complete: all four lessons (tickets #6, #7) are written, each with a two-way-linked interview question. Next up is **Part 3 · GPU Programming (Triton)**. All vLLM flags/APIs are verified via Context7 (ADR-0004); the baseline is **vLLM 0.26.0**. See the [Interview Bank](../interview/index.md) for the linked question set.
+!!! note "Part 2 complete"
+    All four lessons are written, each with a two-way-linked interview question. All vLLM flags/APIs are verified via Context7 (ADR-0004); the baseline is **vLLM 0.26.0**. See the [Interview Bank](../interview/index.md) for the linked question set.

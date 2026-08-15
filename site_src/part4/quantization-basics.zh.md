@@ -97,7 +97,7 @@ $$
 两个你会一直用到的推论：
 
 - **每多一比特，误差减半。** $b \to b+1$ 大致翻倍 $q_{\max}$，把 `scale` 与误差界减半。INT8 vs INT4 是 ~16× 更细的步长。
-- **Outlier 是毒药。** 误差随*范围* $h-\ell$ 变化。单个大幅值权重拉伸范围，抬高*每个*共享该 scale 的值的 `scale`。这就是为什么有粒度（per-channel/group）与 outlier-aware 方法——正是下一课与 #11 方法族的全部主题。
+- **Outlier 是毒药。** 误差随*范围* $h-\ell$ 变化。单个大幅值权重拉伸范围，抬高*每个*共享该 scale 的值的 `scale`。这就是为什么有粒度（per-channel/group）与 outlier-aware 方法——正是下一课与方法族课的全部主题。
 
 ### 3.3 为什么更少比特 → 更高吞吐（以及有效比特数）
 
@@ -177,7 +177,7 @@ INT4 round-trip of [-0.9, -0.2, 0.1, 0.5, 3.0]:
 
 ## 5 · Lab —— 误差随比特宽度，与 outlier 税
 
-这个 Lab 不需要 GPU——就是上面的纯 Python 模型，扫过比特宽度。（GPU 出现在[下一课](quantization-schemes.md)的动手量化与 #11。）
+这个 Lab 不需要 GPU——就是上面的纯 Python 模型，扫过比特宽度。（GPU 出现在[下一课](quantization-schemes.md)的动手量化与方法族课。）
 
 ```python title="quant_error_sweep.py"
 from affine_quantization import quantize_dequantize   # 来自 §4
@@ -213,7 +213,7 @@ for bits in (8, 6, 4, 3, 2):
 
 - [数值格式](../part0/number-formats.md) 课 —— FP16/INT8/INT4 是什么及其范围-vs-分辨率权衡，本 Part 的输入。
 - [算子 Roofline](../part2/roofline-analysis.md) 课 —— 为什么 decode 是 memory-bound，因而更少的权重字节 ≈ 更多速度。
-- 下一节：[量化的选择](quantization-schemes.md) —— 粒度、对称性、量化什么、PTQ vs QAT；然后是 #11 的方法族（GPTQ/AWQ/…）与动手把 `Qwen2.5-7B` 跑成 INT4。
+- 下一节：[量化的选择](quantization-schemes.md) —— 粒度、对称性、量化什么、PTQ vs QAT；然后是方法族课（GPTQ/AWQ/…）与动手把 `Qwen2.5-7B` 跑成 INT4。
 - *LLM.int8()*（Dettmers 等）—— 激活里的 outlier 问题，讲得很具体。
 
 ## 9 · 自测小问

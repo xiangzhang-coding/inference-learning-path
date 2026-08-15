@@ -19,7 +19,7 @@ The end-to-end path, and where each Part-4 idea plugs in (a *flow*, so Mermaid, 
 flowchart LR
     FP16["FP16 model<br/>Qwen2.5-7B · ~15 GB wts"] -->|"quantize OFFLINE, once<br/>llm-compressor: GPTQModifier(W4A16) + calibration<br/>(or grab a prebuilt AWQ checkpoint)"| INT4["INT4 checkpoint<br/>compressed-tensors · ~4-5 GB wts<br/>vLLM auto-detects (no flag)"]
     INT4 -->|"serve"| M["measure — A/B vs FP16"]
-    M --> Q["quality: small eval (#3)<br/>greedy, seed, per-category"]
+    M --> Q["quality: small eval<br/>greedy, seed, per-category"]
     M --> S["speed: vllm bench throughput<br/>output tokens/s"]
     M --> V["memory: freed VRAM → more KV"]
 ```
@@ -41,7 +41,7 @@ Two shapes to hold:
 
 Point vLLM at the checkpoint. It reads the quantization method from the config and picks the right INT4 kernel (Marlin on Ampere+); you don't pass a flag. Use `LLM.chat(...)` (not `generate`) so the Instruct chat template is applied — a `generate` call feeds a malformed prompt and tanks quality for the wrong reason.
 
-### 3.3 Measure quality — the small eval set (#3)
+### 3.3 Measure quality — the small eval set
 
 Quantization's failure mode is silent quality loss, so you **measure**. Reuse the [small eval set](../eval/small.md): 20 items with deterministic programmatic checks. Run it on FP16 and INT4 with `temperature=0.0` + fixed `seed` (so a re-run can't differ by chance), and diff the per-category accuracy. A drop concentrated in one category (e.g. `math` or `format`) is your signal to back off.
 
@@ -96,7 +96,7 @@ print(f"INT4 checkpoint saved to {SAVE_DIR}")           # ~4–5 GB on disk vs ~
 Reuses load_items/summarize from the small-eval-set lesson. Numbers are illustrative."""
 import json
 from vllm import LLM, SamplingParams
-from score import load_items, summarize          # from the small eval set (#3)
+from score import load_items, summarize          # from the small eval set
 
 CHECKPOINTS = {
     "fp16": "Qwen/Qwen2.5-7B-Instruct",

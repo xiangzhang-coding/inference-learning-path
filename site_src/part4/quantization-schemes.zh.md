@@ -1,7 +1,7 @@
 # 量化的选择：粒度、对称性、量化什么，以及 PTQ vs QAT
 
 !!! info "基线：**vLLM 0.26.0** · 模型 `Qwen2.5-7B-Instruct` · 单张 RTX 4090（24 GB）"
-    这里用到的 vLLM 量化命名——`WxAy` 方案（如 `W4A16`、`W8A8`）、`LLM(..., quantization="fp8")` / `vllm serve --quantization fp8`、以及动态 FP8 对 Linear 权重按 per-tensor 量化、对激活按 per-tensor 动态缩放——经 Context7 对照 vLLM 0.26.0 核实（ADR-0004）。§4 的粒度/对称性演示是**纯 Python 数学**、离线；误差界（`≤ step/2`）是精确的。任何精度/大小数字均为**示例 / 量级参考**。具体方法族（GPTQ/AWQ/SmoothQuant/…）与动手把 `Qwen2.5-7B` 跑成 INT4 是 **#11**。
+    这里用到的 vLLM 量化命名——`WxAy` 方案（如 `W4A16`、`W8A8`）、`LLM(..., quantization="fp8")` / `vllm serve --quantization fp8`、以及动态 FP8 对 Linear 权重按 per-tensor 量化、对激活按 per-tensor 动态缩放——经 Context7 对照 vLLM 0.26.0 核实（ADR-0004）。§4 的粒度/对称性演示是**纯 Python 数学**、离线；误差界（`≤ step/2`）是精确的。任何精度/大小数字均为**示例 / 量级参考**。具体方法族（GPTQ/AWQ/SmoothQuant/…）与动手把 `Qwen2.5-7B` 跑成 INT4 是[方法族课](quantization-methods.md)与[动手 lab](quantization-lab.md)。
 
 ---
 
@@ -52,7 +52,7 @@
 两个要抓住的形状：
 
 - **更细粒度用一点存储换精度。** 把一个 scale 拆成许多，缩小每个必须覆盖的范围，于是通道内或组内的 outlier 不再粗化整个张量。代价是更多存的 scale（更高有效比特）与略复杂的 kernel——真实但通常便宜的权衡。
-- **「量化什么」决定你赢内存还是赢计算。** Weight-only（`W4A16`）砍 HBM 流量 → memory-bound *decode* 更快，且因为权重静态又规矩而容易。Weight+activation（`W8A8`）经 INT8 tensor core 也砍*计算*，但激活是动态且多 outlier 的，需要额外技巧（#11 的方法族）。
+- **「量化什么」决定你赢内存还是赢计算。** Weight-only（`W4A16`）砍 HBM 流量 → memory-bound *decode* 更快，且因为权重静态又规矩而容易。Weight+activation（`W8A8`）经 INT8 tensor core 也砍*计算*，但激活是动态且多 outlier 的，需要额外技巧（[方法族](quantization-methods.md)）。
 
 ## 3 · 原理与四个选择
 
@@ -68,8 +68,8 @@
 
 vLLM 把方案命名为 `WxAy` = $x$ 比特权重、$y$ 比特激活：
 
-- **Weight-only**（`W4A16`、`W8A16`）：量化权重、激活保持 FP16。权重在片上**反量化回 FP16**、matmul 跑 FP16——所以赢面是 **HBM 带宽**（更少权重字节 → memory-bound *decode* 更快），而非 FLOPs。容易且流行，因为权重静态、近对称；这是 AWQ/GPTQ 的 INT4 区间（#11）。
-- **Weight+activation**（`W8A8`）：两者都量化，于是 matmul 跑在 **INT8 tensor core** 上——在内存赢面之上再加真正的**计算**加速，对 compute-bound *prefill* 与大 batch 有价值。难点：激活在运行时计算、有大 outlier，所以朴素 `W8A8` 掉精度——故有 SmoothQuant（把 outlier 迁到权重侧）等（#11）。vLLM 的动态 **FP8** 路径是中间地带：它对 Linear 权重按 per-tensor 量化、对激活*每次前向按 per-tensor 动态缩放*（无需校准），拿一些延迟收益换精度。
+- **Weight-only**（`W4A16`、`W8A16`）：量化权重、激活保持 FP16。权重在片上**反量化回 FP16**、matmul 跑 FP16——所以赢面是 **HBM 带宽**（更少权重字节 → memory-bound *decode* 更快），而非 FLOPs。容易且流行，因为权重静态、近对称；这是 AWQ/GPTQ 的 INT4 区间。
+- **Weight+activation**（`W8A8`）：两者都量化，于是 matmul 跑在 **INT8 tensor core** 上——在内存赢面之上再加真正的**计算**加速，对 compute-bound *prefill* 与大 batch 有价值。难点：激活在运行时计算、有大 outlier，所以朴素 `W8A8` 掉精度——故有 SmoothQuant（把 outlier 迁到权重侧）等。vLLM 的动态 **FP8** 路径是中间地带：它对 Linear 权重按 per-tensor 量化、对激活*每次前向按 per-tensor 动态缩放*（无需校准），拿一些延迟收益换精度。
 - **KV-cache 量化**是另一个独立的轴——量化存的 [KV cache](../part0/kv-cache.md) 以装下更多序列（有助[显存预算](../interview/vram-capacity-planning.md)）；它与权重/激活量化正交。
 
 ### 3.4 PTQ vs QAT
@@ -141,7 +141,7 @@ skewed data [0.0, 0.1, 0.4, 0.8, 2.0]:
 
 ```python title="scheme_names.py"
 # vLLM 用 WxAy 表达「量化什么」，并用 `quantization=` 选方法。
-# （名称/flag 经 vLLM 0.26.0 核实；运行它们是 #11 的动手课。）
+# （名称/flag 经 vLLM 0.26.0 核实；运行它们是动手 lab。）
 schemes = {
     "W4A16": "4-bit weights, 16-bit activations  -> weight-only; memory/decode win (AWQ/GPTQ INT4)",
     "W8A8":  "8-bit weights, 8-bit activations   -> INT8 tensor cores; compute win, needs outlier handling",
@@ -152,7 +152,7 @@ for name, note in schemes.items():
 # 在 vLLM 中：  LLM(model, quantization="fp8")   或   vllm serve <model> --quantization fp8
 ```
 
-**要观察什么：** `WxAy` 名字立刻告诉你一个方法是内存打法（`W4A16`，激活不动）还是计算打法（`W8A8`，两者都量化）。把你在 #11 遇到的任何方法映到这四个选择上——它的比特宽度（量化什么）、粒度、对称性、以及它是 PTQ——你不用死记就能推理它的精度/速度画像。真正在 `Qwen2.5-7B` 上*运行* `--quantization` 是 [#11 动手课](index.md)。
+**要观察什么：** `WxAy` 名字立刻告诉你一个方法是内存打法（`W4A16`，激活不动）还是计算打法（`W8A8`，两者都量化）。把你在[方法族](quantization-methods.md)遇到的任何方法映到这四个选择上——它的比特宽度（量化什么）、粒度、对称性、以及它是 PTQ——你不用死记就能推理它的精度/速度画像。真正在 `Qwen2.5-7B` 上*运行* `--quantization` 是[动手 lab](quantization-lab.md)。
 
 ## 6 · 常见坑 / 反直觉点
 
@@ -161,7 +161,7 @@ for name, note in schemes.items():
 - **把 `W8A8` 当成「比 `W4A16` 量化得更多」。** 它们优化不同的东西：`W4A16` 是*内存/decode* 赢面（激活保持 FP16）；`W8A8` 是*计算*赢面（INT8 tensor core），但必须驯服激活 outlier。量化得更多 ≠ 严格更好——是不同的权衡。
 - **为部署上 QAT。** QAT 需要训练流水线、对服务很少值得；PTQ（± 校准）是推理默认。只在 PTQ 在你目标比特下守不住质量时才用 QAT。
 - **以为更细粒度免费。** 更多 scale = 更高有效比特、有时更慢的 kernel。per-group ~128 是常见甜点，而非 per-element。
-- **忘了激活才是难点。** 权重静态、近对称（易）；激活动态、重尾（难）。这个不对称就是为什么 weight-only 量化这么流行、为什么激活量化需要 SmoothQuant 式技巧（#11）。
+- **忘了激活才是难点。** 权重静态、近对称（易）；激活动态、重尾（难）。这个不对称就是为什么 weight-only 量化这么流行、为什么激活量化需要 SmoothQuant 式技巧。
 - **静态 vs 动态激活 scale —— 一条隐藏的轴。** 除对称性外，一个激活 scale 可以*静态*计算（从校准算一次）或*动态*计算（每次前向重算）。因为激活随输入剧烈摆动，动态缩放通常更能守住精度——vLLM 的 FP8 路径对激活*每次前向按 per-tensor 动态缩放*（无需校准），某些 `W8A8` 流水线更细到*per-token* scale。静态更简单/更快，但假设分布稳定，于是 off-distribution 流量会咬人。并非普适——在看重 kernel 简洁或固定 scale 处静态更优。
 
 ## 7 · 面试连线
@@ -175,7 +175,7 @@ for name, note in schemes.items():
 延伸阅读：
 
 - [量化基础](quantization-basics.md) 课 —— 这些选择调的那个仿射映射与误差界。
-- 下一节（#11）：方法族——**GPTQ、AWQ、SmoothQuant、FP8、LLM.int8()**——作为这个设计空间里的具体点，加上动手把 `Qwen2.5-7B` → INT4 在 vLLM 里跑。
+- 下一节：方法族——**GPTQ、AWQ、SmoothQuant、FP8、LLM.int8()**——作为这个设计空间里的具体点，加上动手把 `Qwen2.5-7B` → INT4 在 vLLM 里跑。
 - *SmoothQuant*（Xiao 等）—— 把激活 outlier 迁进权重让 `W8A8` 可行；「激活才是难点」这个坑最清楚的动机。
 
 ## 9 · 自测小问

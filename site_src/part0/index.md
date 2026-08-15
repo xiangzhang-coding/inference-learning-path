@@ -19,5 +19,5 @@
 - **[Inference Performance Metrics](metrics.md)** — TTFT, TPOT/ITL, throughput, and goodput, plus how to measure each with `vllm bench serve` and Prometheus.
 - **[Number Formats: FP16 · BF16 · FP8 · INT8 · INT4](number-formats.md)** — the range-vs-precision trade behind every dtype, paving the way into quantization.
 
-!!! note "Scaffolding status"
-    This learning path is being built part by part. **Part 0A** (tickets #2, #4) — inference flow, the Transformer infra view, KV cache — and **Part 0B** (ticket #5) — GPU hardware, metrics, number formats — are fully written, each with linked interview questions. Parts 1–8 land in later tickets. All vLLM flags/APIs are verified via Context7 (ADR-0004); the baseline is **vLLM 0.26.0**. See the [Interview Bank](../interview/index.md) for the linked question set as it grows.
+!!! note "Part 0 complete"
+    **Part 0A** — inference flow, the Transformer infra view, KV cache — and **Part 0B** — GPU hardware, metrics, number formats — are written, each with a two-way-linked interview question. All vLLM flags/APIs are verified via Context7 (ADR-0004); the baseline is **vLLM 0.26.0**. See the [Interview Bank](../interview/index.md) for the linked question set.

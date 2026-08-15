@@ -7,7 +7,7 @@ This site is **bilingual**. English is the default; a Simplified-Chinese transla
 ## What you'll get
 
 - **Parts 0–8**, ordered *motivation-first* — every optimization is a conclusion you can derive, not a fact to memorize.
-- A **~100-question interview bank** organized by module, each entry: direct answer → deep dive → code → follow-up → linked concept.
+- A **curated interview bank** organized by module, each entry: direct answer → deep dive → code → follow-up → linked concept.
 - A **throughput-maxing Capstone**: push `Qwen2.5-7B-Instruct` as far as it goes on a single RTX 4090 within a ¥500 AutoDL budget, and write the "before → after" report.
 
 ## How each lesson is built

@@ -171,7 +171,7 @@ import time
 from vllm import LLM, SamplingParams
 from score import load_items, summarize      # 来自评测集小集页
 
-items = load_items("small_eval.jsonl")        # 固定输入（评测集，票 #3）
+items = load_items("small_eval.jsonl")        # 固定输入（评测集）
 convos = [[{"role": "user", "content": it["prompt"]}] for it in items]
 sp = SamplingParams(temperature=0.0, max_tokens=128, seed=0)   # 固定采样 -> 可比
 

@@ -81,7 +81,7 @@ Intensity is **pinned near 1 FLOP/byte** and only *drops* as context grows. A 40
 
 **Reading the two side by side.** The denominator is the *same* (weights + KV); the numerator is the entire difference. Prefill's numerator scales with the prompt — $2NS$ — so intensity climbs with $S$. Decode's numerator is frozen at $2N$ (one token), so intensity can only *fall* as the KV term grows. The line that separates "compute-bound" from "memory-bound" is the GPU's **ridge point** — peak FLOP/s ÷ memory bandwidth. On a 4090 that lands in the low hundreds of FLOP/byte ($\approx 165\ \text{TFLOP/s} \div 1\ \text{TB/s}$, BF16). Prefill sails past the ridge into the compute-bound region; decode, pinned near 1, sits **more than 100× below** it — squarely memory-bound. This is exactly the roofline picture you will make quantitative in [Part 2](../part2/roofline-analysis.md).
 
-This single inequality explains the latency metrics too: **TTFT** (Time To First Token) is dominated by prefill (you wait for the whole prompt to be digested before the first token appears); **TPOT** (Time Per Output Token) is dominated by decode (each step's memory traffic). Their formal definitions and measurement are Part 0B's job (ticket #5); here we only need the causal link. → [TTFT, TPOT](../glossary.md).
+This single inequality explains the latency metrics too: **TTFT** (Time To First Token) is dominated by prefill (you wait for the whole prompt to be digested before the first token appears); **TPOT** (Time Per Output Token) is dominated by decode (each step's memory traffic). Their formal definitions and measurement are Part 0B's job; here we only need the causal link. → [TTFT, TPOT](../glossary.md).
 
 ## 4 · Complete runnable code + line-by-line
 

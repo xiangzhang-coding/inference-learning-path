@@ -19,7 +19,7 @@ Part 4 的一切在这里汇合：拿 `Qwen2.5-7B-Instruct`、把它变 INT4、�
 flowchart LR
     FP16["FP16 model<br/>Qwen2.5-7B · ~15 GB wts"] -->|"quantize OFFLINE, once<br/>llm-compressor: GPTQModifier(W4A16) + calibration<br/>(or grab a prebuilt AWQ checkpoint)"| INT4["INT4 checkpoint<br/>compressed-tensors · ~4-5 GB wts<br/>vLLM auto-detects (no flag)"]
     INT4 -->|"serve"| M["measure — A/B vs FP16"]
-    M --> Q["quality: small eval (#3)<br/>greedy, seed, per-category"]
+    M --> Q["quality: small eval<br/>greedy, seed, per-category"]
     M --> S["speed: vllm bench throughput<br/>output tokens/s"]
     M --> V["memory: freed VRAM → more KV"]
 ```
@@ -41,7 +41,7 @@ flowchart LR
 
 把 vLLM 指向 checkpoint。它从 config 读量化方法、选对 INT4 kernel（Ampere+ 上的 Marlin）；你不传 flag。用 `LLM.chat(...)`（不是 `generate`）以套上 Instruct chat 模板——`generate` 会喂畸形 prompt、因无关原因拖垮质量。
 
-### 3.3 测质量 —— 小评测集（#3）
+### 3.3 测质量 —— 小评测集
 
 量化的失败模式是悄悄掉质量，所以你**测**。复用[小评测集](../eval/small.md)：20 条带确定性程序化检查。在 FP16 与 INT4 上用 `temperature=0.0` + 固定 `seed` 跑（好让重跑不会偶然不同），diff 每类别精度。集中在某一类别的下降（如 `math` 或 `format`）就是你退一步的信号。
 
@@ -93,10 +93,10 @@ print(f"INT4 checkpoint saved to {SAVE_DIR}")           # 磁盘上 ~4–5 GB vs
 
 ```python title="ab_quality.py"
 """在 FP16 vs INT4 上用完全相同的贪心设置跑小评测集；diff 精度。
-复用小评测集（#3）的 load_items/summarize。数字是示例。"""
+复用小评测集的 load_items/summarize。数字是示例。"""
 import json
 from vllm import LLM, SamplingParams
-from score import load_items, summarize          # 来自小评测集（#3）
+from score import load_items, summarize          # 来自小评测集
 
 CHECKPOINTS = {
     "fp16": "Qwen/Qwen2.5-7B-Instruct",

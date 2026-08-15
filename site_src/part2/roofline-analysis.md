@@ -144,7 +144,7 @@ $$
 I_{\text{attn}}^{\text{prefill}} \approx \frac{4 n_q S^2 d}{2 n_{\text{kv}} S d\, b} = \frac{2}{b}\cdot\frac{n_q}{n_{\text{kv}}}\cdot S = 7S \ \text{(Qwen, BF16)}
 $$
 
-Intensity grows **linearly in $S$**, crossing the ridge at $S \approx I^{*}b/(2\,n_q/n_{\text{kv}}) \approx 165/7 \approx 24$ tokens — so even a short prompt makes prefill attention compute-bound. (Caveat: this counts only the KV read. *Naive* attention materializes the $S\times S$ score matrix to HBM, adding $\sim S^2 b$ bytes and dragging intensity back down — which is exactly the trap [FlashAttention](../part0/gpu-hardware.md) avoids by keeping scores in SRAM. That's the next lesson's job, ticket #7.)
+Intensity grows **linearly in $S$**, crossing the ridge at $S \approx I^{*}b/(2\,n_q/n_{\text{kv}}) \approx 165/7 \approx 24$ tokens — so even a short prompt makes prefill attention compute-bound. (Caveat: this counts only the KV read. *Naive* attention materializes the $S\times S$ score matrix to HBM, adding $\sim S^2 b$ bytes and dragging intensity back down — which is exactly the trap [FlashAttention](../part0/gpu-hardware.md) avoids by keeping scores in SRAM. That's the next lesson's job.)
 
 ### 3.3 Reconciling with Part 0's "decode $I\approx1$"
 

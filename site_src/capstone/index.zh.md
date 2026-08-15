@@ -84,7 +84,7 @@ Capstone 不教新机制；它用一套严谨的方法把你已有的机制组�
 
 ```python title="capstone_stage.py"
 """在固定 eval 集上测一个配置：分类质量 + decode 吞吐。
-复用小 eval 集 (#3) 的 load_items/summarize。API 已对照 vLLM 0.26.0 核实。
+复用小 eval 集的 load_items/summarize。API 已对照 vLLM 0.26.0 核实。
 作者不执行（ADR-0004）；返回的数字是你的。"""
 import time
 from vllm import LLM, SamplingParams

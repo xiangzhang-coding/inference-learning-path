@@ -84,7 +84,7 @@ The deliverable is a report, so the code is a **report generator**: measure one 
 
 ```python title="capstone_stage.py"
 """Measure ONE config on the fixed eval set: per-category quality + decode throughput.
-Reuses load_items/summarize from the small eval set (#3). API verified vs vLLM 0.26.0.
+Reuses load_items/summarize from the small eval set. API verified vs vLLM 0.26.0.
 Author does not execute (ADR-0004); returned numbers are yours."""
 import time
 from vllm import LLM, SamplingParams

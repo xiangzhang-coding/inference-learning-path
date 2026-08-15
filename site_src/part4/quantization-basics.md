@@ -97,7 +97,7 @@ $$
 Two consequences you'll use constantly:
 
 - **Each bit halves the error.** Going $b \to b+1$ roughly doubles $q_{\max}$, halving `scale` and the error bound. INT8 vs INT4 is ~16× finer steps.
-- **Outliers are poison.** The error scales with the *range* $h-\ell$. A single large-magnitude weight stretches the range, inflating `scale` for *every* value sharing that scale. This is why granularity (per-channel/group) and outlier-aware methods exist — the whole subject of the next lesson and the method families in #11.
+- **Outliers are poison.** The error scales with the *range* $h-\ell$. A single large-magnitude weight stretches the range, inflating `scale` for *every* value sharing that scale. This is why granularity (per-channel/group) and outlier-aware methods exist — the whole subject of the next lesson and the method-families lesson.
 
 ### 3.3 Why fewer bits → more throughput (and the effective bit count)
 
@@ -177,7 +177,7 @@ Read it off: INT4 vs INT8 is a coarser step (fewer bits) but 4× vs 2× smaller 
 
 ## 5 · Lab — error vs bit-width, and the outlier tax
 
-This lab needs no GPU — it's the pure-Python model above, swept over bit-widths. (The GPU comes in the [next lesson's](quantization-schemes.md) hands-on quantization and #11.)
+This lab needs no GPU — it's the pure-Python model above, swept over bit-widths. (The GPU comes in the [next lesson's](quantization-schemes.md) hands-on quantization and the method-families lesson.)
 
 ```python title="quant_error_sweep.py"
 from affine_quantization import quantize_dequantize   # from §4
@@ -213,7 +213,7 @@ Further reading:
 
 - The [Number Formats](../part0/number-formats.md) lesson — what FP16/INT8/INT4 are and their range-vs-resolution trade, the input to this Part.
 - The [Operator Roofline](../part2/roofline-analysis.md) lesson — why decode is memory-bound, hence why fewer weight bytes ≈ more speed.
-- Next: [Quantization Choices](quantization-schemes.md) — granularity, symmetry, what to quantize, and PTQ vs QAT; then #11's method families (GPTQ/AWQ/…) and the hands-on `Qwen2.5-7B` INT4 run.
+- Next: [Quantization Choices](quantization-schemes.md) — granularity, symmetry, what to quantize, and PTQ vs QAT; then the method families (GPTQ/AWQ/…) and the hands-on `Qwen2.5-7B` INT4 run.
 - *LLM.int8()* (Dettmers et al.) — the outlier problem in activations, made concrete.
 
 ## 9 · Self-check

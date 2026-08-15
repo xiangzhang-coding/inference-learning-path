@@ -18,5 +18,5 @@
 - **[FlashAttention：IO-aware 的注意力 kernel](flash-attention.md)** —— 分块 Q/K/V、用 online softmax 把 $S\times S$ scores 留在 SRAM，把 $O(S^2)$ 的 HBM 流量变成 $O(S)$，同时算出完全相同的输出。
 - **[Kernel Fusion 与 CUDA Graphs：干掉 decode 的 launch overhead](kernel-fusion-cuda-graphs.md)** —— 为什么几百个小 decode kernel 让一步变 launch-bound，以及 fusion 与 CUDA-graph 重放如何塌缩这份开销。
 
-!!! note "脚手架状态"
-    Part 2 已完成：四节课（票 #6、#7）全部写就，各带一道双向链接的面试题。接下来是 **Part 3 · GPU 编程（Triton）**。所有 vLLM flag/API 经 Context7 核实（ADR-0004）；基线为 **vLLM 0.26.0**。链接题集见 [面试题库](../interview/index.md)。
+!!! note "Part 2 完成"
+    四节课全部写就，各带一道双向链接的面试题。所有 vLLM flag/API 经 Context7 核实（ADR-0004）；基线为 **vLLM 0.26.0**。链接题集见 [面试题库](../interview/index.md)。

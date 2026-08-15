@@ -144,7 +144,7 @@ $$
 I_{\text{attn}}^{\text{prefill}} \approx \frac{4 n_q S^2 d}{2 n_{\text{kv}} S d\, b} = \frac{2}{b}\cdot\frac{n_q}{n_{\text{kv}}}\cdot S = 7S \ \text{（Qwen，BF16）}
 $$
 
-强度**随 $S$ 线性增长**，在 $S \approx I^{*}b/(2\,n_q/n_{\text{kv}}) \approx 165/7 \approx 24$ 个 token 处越过拐点——所以哪怕短 prompt 也让 prefill attention compute-bound。（注意：这只数了 KV 读。*朴素* attention 会把 $S\times S$ 的 score 矩阵物化到 HBM，增加 $\sim S^2 b$ 字节，把强度又拽回来——这正是 [FlashAttention](../part0/gpu-hardware.md) 靠把 scores 留在 SRAM 所避开的陷阱。那是下一课、票 #7 的活儿。）
+强度**随 $S$ 线性增长**，在 $S \approx I^{*}b/(2\,n_q/n_{\text{kv}}) \approx 165/7 \approx 24$ 个 token 处越过拐点——所以哪怕短 prompt 也让 prefill attention compute-bound。（注意：这只数了 KV 读。*朴素* attention 会把 $S\times S$ 的 score 矩阵物化到 HBM，增加 $\sim S^2 b$ 字节，把强度又拽回来——这正是 [FlashAttention](../part0/gpu-hardware.md) 靠把 scores 留在 SRAM 所避开的陷阱。那是下一课的活儿。）
 
 ### 3.3 与 Part 0「decode $I\approx1$」对账
 

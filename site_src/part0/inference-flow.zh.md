@@ -81,7 +81,7 @@ $$
 
 **把两式并排读。** 分母是*一样*的（权重 + KV）；分子才是全部差别。Prefill 的分子随 prompt 增长——$2NS$——所以强度随 $S$ 攀升。Decode 的分子被冻在 $2N$（一个 token），所以强度只会随 KV 项增大而*下降*。把「compute-bound」与「memory-bound」分开的那条线，是 GPU 的 **ridge point（脊点）**——峰值 FLOP/s ÷ 内存带宽。一张 4090 落在几百 FLOP/字节 这个量级（$\approx 165\ \text{TFLOP/s} \div 1\ \text{TB/s}$，BF16）。Prefill 一举越过脊点、进入 compute-bound 区；decode 钉在 1 附近，落在脊点**下方 100× 以上**——妥妥的 memory-bound。这正是你将在 [Part 2](../part2/roofline-analysis.md) 里量化的 roofline 图景。
 
-这个不等式也解释了延迟度量：**TTFT**（首 token 延迟）由 prefill 主导（要等整段 prompt 被消化完，第一个 token 才出现）；**TPOT**（每输出 token 时间）由 decode 主导（每步的内存搬运）。它们的正式定义与测量是 Part 0B 的活（票 #5）；这里只需建立因果链。→ [TTFT、TPOT](../glossary.md)。
+这个不等式也解释了延迟度量：**TTFT**（首 token 延迟）由 prefill 主导（要等整段 prompt 被消化完，第一个 token 才出现）；**TPOT**（每输出 token 时间）由 decode 主导（每步的内存搬运）。它们的正式定义与测量是 Part 0B 的活；这里只需建立因果链。→ [TTFT、TPOT](../glossary.md)。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 

@@ -171,7 +171,7 @@ import time
 from vllm import LLM, SamplingParams
 from score import load_items, summarize      # from the eval-set small-set page
 
-items = load_items("small_eval.jsonl")        # the fixed inputs (Eval Sets, ticket #3)
+items = load_items("small_eval.jsonl")        # the fixed inputs (Eval Sets)
 convos = [[{"role": "user", "content": it["prompt"]}] for it in items]
 sp = SamplingParams(temperature=0.0, max_tokens=128, seed=0)   # fixed sampling -> comparable
 

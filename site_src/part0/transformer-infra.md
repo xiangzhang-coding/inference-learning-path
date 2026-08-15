@@ -84,9 +84,9 @@ $$
 
 Qwen2.5-7B picks $h=28$, $n_{\text{kv}}=4$ → a $28/4 = 7\times$ smaller KV cache than MHA, with negligible quality loss. **GQA changes the KV column dramatically and the FLOP column barely at all** — that's why it's nearly universal.
 
-**RoPE** injects position by rotating Q and K — **no weights, trivial FLOPs**, and its extrapolation behavior is what makes long context possible (→ Part 5B, ticket #16).
+**RoPE** injects position by rotating Q and K — **no weights, trivial FLOPs**, and its extrapolation behavior is what makes long context possible (→ Part 6).
 
-**MoE** replaces the one FFN with $E$ experts but routes each token to only $k$ of them. Parameters balloon (all $E$ experts live in VRAM) while **active FLOPs/token stay near a dense $k$-expert model**. So MoE trades *weight VRAM* for *cheap-per-token compute* — a different point on the cost map (→ Part 6, ticket #16/#17). Qwen2.5-7B is **dense**, so the counter below is dense.
+**MoE** replaces the one FFN with $E$ experts but routes each token to only $k$ of them. Parameters balloon (all $E$ experts live in VRAM) while **active FLOPs/token stay near a dense $k$-expert model**. So MoE trades *weight VRAM* for *cheap-per-token compute* — a different point on the cost map (→ Part 7). Qwen2.5-7B is **dense**, so the counter below is dense.
 
 ## 4 · Complete runnable code + line-by-line
 
