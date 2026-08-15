@@ -48,6 +48,21 @@ THE LAUNCH TOPOLOGY — processes, ranks, and how they rendezvous:
                                            NCCL over NVLink in-node, over IB/Ethernet cross-node
 ```
 
+The collectives above are a data-movement picture (ASCII per ADR-0005). The init-hang *diagnosis* of §3.5 — the part that actually bites — is a decision procedure, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    HANG["multi-GPU serve hangs at startup (no error)"] --> TEST{"nccl_sanity.py under torchrun passes?"}
+    TEST -->|"no — bare PyTorch NCCL hangs"| HW["hardware / driver / network fault<br/>set NCCL_SOCKET_IFNAME + GLOO_SOCKET_IFNAME (e.g. eth0)"]
+    TEST -->|"yes"| TRACE["turn on NCCL_DEBUG=TRACE, find where init stalls"]
+    HW --> IF{"still hangs?"}
+    IF -->|"yes"| IP["set VLLM_HOST_IP (multi-homed); same --master-addr on every node; workers --headless"]
+    IF -->|"no"| OK["rendezvous completes, workers start"]
+    TRACE --> CFG["suspect config: does TP divide the heads? is TP within one node?"]
+    IP --> OK
+    CFG --> OK
+```
+
 Three shapes to keep:
 
 - **A collective is one fused operation, not a loop of sends.** "Every GPU needs the sum" is *one* all-reduce that NCCL schedules as a ring/tree across the actual links — not N² point-to-point messages. That's why it's fast and why you never hand-roll it.
@@ -122,6 +137,16 @@ Multi-GPU rarely fails by crashing — it **hangs at initialization**, because N
 - **`NCCL_P2P_DISABLE=1`** — a *temporary* workaround if peer-to-peer (NVLink/PCIe P2P) has a hardware/driver fault; the real fix is the driver/topology.
 - **The sanity test (§4)** — run it *before* blaming vLLM. If the bare PyTorch NCCL all-reduce hangs or crashes, the problem is hardware/driver/network, not the engine.
 
+### 3.6 Reading it in vLLM's source (v0.26.0)
+
+The primitives and the launch are concrete classes (ADR-0002: read + reason, don't rewrite):
+
+- **vLLM's NCCL wrapper** is **`PyNcclCommunicator`** in [`vllm/distributed/device_communicators/pynccl.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl.py). Note it has **both** `all_reduce` (TP's per-layer combine) **and** `send`/`recv` (PP's stage-to-stage point-to-point) — the two costs of the previous lesson are two different methods here.
+- **It's a ctypes binding, not a Python NCCL.** `PyNcclCommunicator` calls **`NCCLLibrary`** in [`pynccl_wrapper.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl_wrapper.py), which `dlopen`s `libnccl.so` and binds the C symbols **`ncclAllReduce`** and **`ncclCommInitRank`** directly — so a missing/mismatched `libnccl.so` fails *here*, which is why the §4 bare-PyTorch test (loading its own NCCL) is the right isolation step.
+- **The process group** is `GroupCoordinator` ([`vllm/distributed/parallel_state.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/parallel_state.py)); the executor that spawns the ranks is **`MultiprocExecutor`** ([`vllm/v1/executor/multiproc_executor.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/executor/multiproc_executor.py)) for the `mp` backend, or the Ray executor ([`vllm/v1/executor/ray_executor.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/executor/ray_executor.py)) for `ray` — selected by `ParallelConfig.distributed_executor_backend`.
+
+Open `pynccl.py` first — `all_reduce` and `send`/`recv` side by side make the TP-vs-PP cost split concrete.
+
 ## 4 · Complete runnable code + line-by-line
 
 The canonical **GPU-communication sanity test** — vLLM's own troubleshooting script, trimmed to the PyTorch-NCCL core. It does exactly one collective (an all-reduce of all-ones) and checks the math: after summing across `world_size` GPUs, every element must equal `world_size`. If this passes, your NCCL/driver/interconnect is healthy and any multi-GPU vLLM failure is config, not hardware.
@@ -192,6 +217,7 @@ Work up from the wire to the engine:
 - **Assuming all-reduce gets N× slower with more GPUs.** A ring all-reduce is ~$2M$ per GPU *regardless of N* (§3.1) — bandwidth-optimal. The cost driver is the **per-token, per-layer frequency** and the **link bandwidth**, not the GPU count.
 - **Leaving `NCCL_P2P_DISABLE=1` on as a "fix."** It's a diagnostic workaround that can tank performance; the real fix is the driver/topology. Don't ship with it.
 - **Leaving the A100 instance running.** Per ADR-0001 this Lab is power-on-then-off. Multi-GPU rental burns budget fast — tear it down when the collective and TP serve are confirmed.
+- **Assuming every collective is an all-reduce.** In `PyNcclCommunicator` (`pynccl.py`) TP's per-layer combine is `all_reduce`, but PP's stage handoff is `send`/`recv` (point-to-point) — different methods, different cost. Reading the source, a PP boundary is a `send`/`recv` pair, *not* a collective; profile PP expecting all-reduce traffic and you'll look in the wrong place. (And under the hood it's `NCCLLibrary` in `pynccl_wrapper.py` binding `libnccl.so` via ctypes, not a pip-installed NCCL — a library mismatch surfaces there.)
 
 ## 7 · Interview links
 
@@ -207,6 +233,7 @@ Further reading:
 - NVIDIA **NCCL** docs — the collective algorithms (ring/tree), and the `NCCL_*` environment variables quoted in §3.5/§6.
 - vLLM `docs/usage/troubleshooting.md` — the exact GPU/CPU communication sanity script (§4) and the debugging env vars.
 - vLLM `docs/serving/parallelism_scaling.md` and `docs/serving/expert_parallel_deployment.md` — the `mp`/`ray` backends, multi-node flags, and `GLOO_SOCKET_IFNAME` network setup quoted here.
+- vLLM source (v0.26.0): [`vllm/distributed/device_communicators/pynccl.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl.py) (`PyNcclCommunicator.all_reduce`/`send`/`recv`), [`pynccl_wrapper.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl_wrapper.py) (`NCCLLibrary` → `ncclAllReduce`/`ncclCommInitRank`), [`vllm/v1/executor/multiproc_executor.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/executor/multiproc_executor.py) (`mp` backend) — the NCCL wrapper + launch code from §3.6.
 - The [previous lesson](parallelism-strategies.md) — why you parallelize (the collectives here are *how* TP/PP pay for it).
 - The [capacity-planning](../part8/capacity-planning.md) lesson (Part 8) — how TP/PP choices feed the VRAM and fleet-sizing math.
 

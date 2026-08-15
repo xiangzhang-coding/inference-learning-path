@@ -48,6 +48,21 @@ RING ALL-REDUCE = 先 REDUCE-SCATTER 再 ALL-GATHER
                                            NCCL 节点内走 NVLink，跨节点走 IB/以太网
 ```
 
+上面的 collectives 是一张数据流动图（ASCII，按 ADR-0005）。而 §3.5 的 init-hang *诊断*——真正会咬人的部分——是一条决策流程，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    HANG["multi-GPU serve hangs at startup (no error)"] --> TEST{"nccl_sanity.py under torchrun passes?"}
+    TEST -->|"no — bare PyTorch NCCL hangs"| HW["hardware / driver / network fault<br/>set NCCL_SOCKET_IFNAME + GLOO_SOCKET_IFNAME (e.g. eth0)"]
+    TEST -->|"yes"| TRACE["turn on NCCL_DEBUG=TRACE, find where init stalls"]
+    HW --> IF{"still hangs?"}
+    IF -->|"yes"| IP["set VLLM_HOST_IP (multi-homed); same --master-addr on every node; workers --headless"]
+    IF -->|"no"| OK["rendezvous completes, workers start"]
+    TRACE --> CFG["suspect config: does TP divide the heads? is TP within one node?"]
+    IP --> OK
+    CFG --> OK
+```
+
 三个要记住的形状：
 
 - **一次集合通信是一个融合操作，不是一串 send 的循环。**「每张 GPU 都要那个和」是*一次* all-reduce，由 NCCL 按真实链路调度成 ring/tree——而不是 N² 次点对点。这就是它快、以及你永远不该手写它的原因。
@@ -122,6 +137,16 @@ vllm serve /models/Llama-3.1-70B-Instruct \
 - **`NCCL_P2P_DISABLE=1`** —— 当点对点（NVLink/PCIe P2P）有硬件/驱动故障时的*临时*绕过；真正的修复是驱动/拓扑。
 - **自检脚本（§4）** —— 在怪 vLLM *之前*先跑它。如果裸的 PyTorch NCCL all-reduce 卡死或崩溃，问题是硬件/驱动/网络，不是引擎。
 
+### 3.6 在 vLLM 源码里读它（v0.26.0）
+
+原语与启动都是具体的类（ADR-0002：读懂 + 会推，不重写）：
+
+- **vLLM 的 NCCL 包装器**是 [`vllm/distributed/device_communicators/pynccl.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl.py) 里的 **`PyNcclCommunicator`**。注意它**同时**有 `all_reduce`（TP 的每层合并）**和** `send`/`recv`（PP 的 stage 间点对点）——上一课的两种代价在这里是两个不同方法。
+- **它是 ctypes 绑定，不是 Python 版 NCCL。** `PyNcclCommunicator` 调用 [`pynccl_wrapper.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl_wrapper.py) 里的 **`NCCLLibrary`**，它 `dlopen` 加载 `libnccl.so` 并直接绑定 C 符号 **`ncclAllReduce`** 与 **`ncclCommInitRank`**——所以缺失/不匹配的 `libnccl.so` 会*在这里*报错，这正是 §4 的裸 PyTorch 测试（加载它自己的 NCCL）作为隔离步骤的原因。
+- **进程组**是 `GroupCoordinator`（[`vllm/distributed/parallel_state.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/parallel_state.py)）；spawn 各 rank 的执行器是 **`MultiprocExecutor`**（[`vllm/v1/executor/multiproc_executor.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/executor/multiproc_executor.py)，对应 `mp` 后端）或 Ray 执行器（[`vllm/v1/executor/ray_executor.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/executor/ray_executor.py)，对应 `ray`）——由 `ParallelConfig.distributed_executor_backend` 选择。
+
+先打开 `pynccl.py`：`all_reduce` 与 `send`/`recv` 并排，把 TP-vs-PP 的代价差落到实处。
+
 ## 4 · 完整可跑代码 + 逐行讲解
 
 经典的 **GPU 通信自检**——vLLM 自己的排障脚本，裁到 PyTorch-NCCL 核心。它只做一次集合通信（对全 1 向量 all-reduce）并检查算术：跨 `world_size` 张 GPU 求和后，每个元素必须等于 `world_size`。这个过了，你的 NCCL/驱动/互联就是健康的，任何多卡 vLLM 故障就是配置、不是硬件。
@@ -192,6 +217,7 @@ dist.destroy_process_group()
 - **以为 all-reduce 会随卡数 N 倍变慢。** ring all-reduce 每卡约 $2M$、*与 N 无关*（§3.1）——带宽最优。代价的驱动是**每 token、每层的频率**与**链路带宽**，不是卡数。
 - **把 `NCCL_P2P_DISABLE=1` 当「修复」长期开着。** 它是会拖垮性能的诊断绕过；真正的修复是驱动/拓扑。别带着它上线。
 - **让 A100 实例一直开着。** 按 ADR-0001 本 Lab 是开机即关。多卡租金烧预算飞快——集合通信与 TP 服务确认后就拆掉。
+- **以为每个 collective 都是 all-reduce。** 在 `PyNcclCommunicator`（`pynccl.py`）里，TP 的每层合并是 `all_reduce`，但 PP 的 stage 交接是 `send`/`recv`（点对点）——不同方法、不同代价。读源码时，一个 PP 边界是一对 `send`/`recv`，*不是* collective；若你按 all-reduce 流量去 profile PP，就找错地方了。（底层是 `pynccl_wrapper.py` 里的 `NCCLLibrary` 用 ctypes 绑定 `libnccl.so`，而非 pip 装的 NCCL——库不匹配会在那里冒出来。）
 
 ## 7 · 面试连线
 
@@ -207,6 +233,7 @@ dist.destroy_process_group()
 - NVIDIA **NCCL** 文档 —— 集合通信算法（ring/tree），以及 §3.5/§6 引用的 `NCCL_*` 环境变量。
 - vLLM `docs/usage/troubleshooting.md` —— §4 那段精确的 GPU/CPU 通信自检脚本与调试环境变量。
 - vLLM `docs/serving/parallelism_scaling.md` 与 `docs/serving/expert_parallel_deployment.md` —— `mp`/`ray` 后端、多机 flag，以及此处引用的 `GLOO_SOCKET_IFNAME` 网络配置。
+- vLLM 源码（v0.26.0）：[`vllm/distributed/device_communicators/pynccl.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl.py)（`PyNcclCommunicator.all_reduce`/`send`/`recv`）、[`pynccl_wrapper.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/device_communicators/pynccl_wrapper.py)（`NCCLLibrary` → `ncclAllReduce`/`ncclCommInitRank`）、[`vllm/v1/executor/multiproc_executor.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/executor/multiproc_executor.py)（`mp` 后端）——§3.6 的 NCCL 包装器 + 启动代码。
 - [上一节](parallelism-strategies.md) —— 为什么并行（这里的集合通信是 TP/PP *怎么*为它付账）。
 - [容量规划](../part8/capacity-planning.md) 课（Part 8）—— TP/PP 的选择如何喂给 VRAM 与集群规模估算。
 

@@ -51,6 +51,23 @@ Part 6 之前一切都假设只有一张卡。这个假设恰好在两种情况�
     代价：ALL-TO-ALL token 路由   EP 度 = TP × DP（自动）   （0.26.0 中为实验特性）
 ```
 
+上面「每种切分切的是什么」是概念布局（ASCII，按 ADR-0005）。而 §3.5 的*决策流程*——先装下、再复制——是一张拓扑，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    START["model + target QPS/SLO"] --> Q1{"fits on one GPU?"}
+    Q1 -->|"yes"| DP["one GPU; add DP replicas for throughput<br/>(--data-parallel-size)"]
+    Q1 -->|"no"| Q2{"fits within one node?"}
+    Q2 -->|"yes"| TP["TP up to GPUs per node<br/>(--tensor-parallel-size, all-reduce on NVLink)"]
+    Q2 -->|"no"| TPPP["TP within node + PP across nodes<br/>(TP = GPUs/node, PP = nodes)"]
+    TP --> Q3{"MoE model?"}
+    TPPP --> Q3
+    DP --> Q3
+    Q3 -->|"yes"| EP["add EP for expert layers<br/>(--enable-expert-parallel, EP = TP × DP)"]
+    Q3 -->|"no"| DONE["split for capacity, replicate for throughput"]
+    EP --> DONE
+```
+
 三个要记住的形状：
 
 - **容量与吞吐是不同的问题，用不同的工具。**「装不下」→ TP/PP/EP（切模型）。「太慢但装得下」→ DP（复制）。抓错工具族是经典错误。
@@ -131,6 +148,16 @@ vLLM 自己对单个模型副本的策略，按顺序：
 
 主线：**只为容量切到不得不切为止（TP → PP → 多节点），然后为吞吐复制 (DP)**——并让**互联**（节点内 NVLink、跨节点网络）决定每一刀切在哪。
 
+### 3.6 在 vLLM 源码里读它（v0.26.0）
+
+四种切分就是配置 + 少量层/协调器类（ADR-0002：读懂 + 会推，不重写）：
+
+- **TP 是逐线性层实现的**，而非一个全局开关。§3.2 的 Megatron 列/行切分正是 [`vllm/model_executor/layers/linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/linear.py) 里的 `ColumnParallelLinear` 与 `RowParallelLinear`：行并行层的 `forward` 以 `tensor_model_parallel_all_reduce(output_parallel)` 收尾——那次调用**就是** §3.2 的「每个 matmul 一次 all-reduce、每块两次」。`QKVParallelLinear` 切分注意力头，这正是 TP 度必须整除头数的原因。
+- **collective 与 group** 在 [`vllm/distributed/parallel_state.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/parallel_state.py)：`tensor_model_parallel_all_reduce`，以及你用 `get_tp_group()` / `get_pp_group()` 取到的 `GroupCoordinator`——即[下一课](nccl-and-launching-tp-pp.md)启动的 TP、PP 进程组。
+- **旋钮**是 **`ParallelConfig`**（[`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py)）上的 dataclass 字段：`tensor_parallel_size`、`pipeline_parallel_size`、`data_parallel_size`（都默认 `1`）、`enable_expert_parallel`（默认 `False`）、以及 `distributed_executor_backend`（`mp` / `ray`）。
+
+先打开 `linear.py` 跳到 `RowParallelLinear.forward`：那次 all-reduce 就在方法末尾。
+
 ## 4 · 完整可跑代码 + 逐行讲解
 
 一段纯 Python 模型，刻画本节课的两个决策：**模型是否装得进单张 24 GB GPU**（若不能，最小 TP 度是多少），以及 **TP 每个 token 付多少 all-reduce 流量**（让它要 NVLink 的那笔税）。不用 GPU——这是你应当能在白板上算出来的算术。
@@ -208,6 +235,7 @@ Llama-3.1-405B  FP16  754.4 GB -> needs TP>=64    TP all-reduce ~ 8064.0 KB/toke
 - **以为 DP 省显存。** DP 是每副本一份*完整副本*——每卡零节省。它是吞吐工具，且*要求*模型本来就装得下。
 - **把这四种当竞争者。** 它们在正交的轴上组合：TP×PP×DP×EP。服务一个巨大 MoE 的生产系统会四种同时用。
 - **对稠密模型用 EP。** 专家并行只对 **MoE** 有意义——稠密模型里没有专家可切。而且 0.26.0 里它是**实验特性**，度数是 TP×DP、不是直接设的。
+- **以为代码里有个单一的「TP 模式」。** 前向里没有单一的张量并行开关——TP 是由基类*逐层*实现的：`ColumnParallelLinear` 切列，`RowParallelLinear.forward` 以 `tensor_model_parallel_all_reduce` 收尾（`linear.py`）。一个继承普通 `nn.Linear` 而非这些基类的自定义层会**完全不**被切分、在每张卡上悄悄复制完整权重——all-reduce 就*在*层里，所以层必须主动接入。
 
 ## 7 · 面试连线
 
@@ -223,6 +251,7 @@ Llama-3.1-405B  FP16  754.4 GB -> needs TP>=64    TP all-reduce ~ 8064.0 KB/toke
 - *GPipe*（Huang 等，2018）与 *PipeDream*（Narayanan 等，2019）—— 流水线并行与 microbatch/气泡权衡。
 - *Switch Transformer*（Fedus 等，2021）—— MoE 与专家路由，EP 存在的场景。
 - vLLM `docs/serving/parallelism_scaling.md`、`docs/configuration/optimization.md`、`docs/serving/data_parallel_deployment.md`、`docs/serving/expert_parallel_deployment.md` —— 此处引用的 `--tensor-parallel-size` / `--pipeline-parallel-size` / `--data-parallel-size` / `--enable-expert-parallel` 机制与决策树。
+- vLLM 源码（v0.26.0）：[`vllm/model_executor/layers/linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/linear.py)（`ColumnParallelLinear` / `RowParallelLinear` + `tensor_model_parallel_all_reduce`）、[`vllm/distributed/parallel_state.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/parallel_state.py)（`GroupCoordinator`、`get_tp_group`/`get_pp_group`）、[`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py)（`ParallelConfig`）——§3.6 的 TP 切分 + 配置。
 - [下一节课 —— NCCL 集合通信与启动 TP/PP](nccl-and-launching-tp-pp.md) —— TP 每层 all-reduce 之下的集合通信原语，以及真正单机 vs 多机启动 TP/PP。
 
 ## 9 · 自测小问

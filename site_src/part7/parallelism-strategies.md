@@ -51,6 +51,23 @@ EXPERT PARALLEL (EP) — MoE only: split the EXPERTS across GPUs
     cost: ALL-TO-ALL token routing   EP size = TP × DP (auto)   (experimental in 0.26.0)
 ```
 
+The "what each split cuts" picture above is a conceptual layout (ASCII per ADR-0005). The §3.5 *decision procedure* — fit first, then replicate — is a topology, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    START["model + target QPS/SLO"] --> Q1{"fits on one GPU?"}
+    Q1 -->|"yes"| DP["one GPU; add DP replicas for throughput<br/>(--data-parallel-size)"]
+    Q1 -->|"no"| Q2{"fits within one node?"}
+    Q2 -->|"yes"| TP["TP up to GPUs per node<br/>(--tensor-parallel-size, all-reduce on NVLink)"]
+    Q2 -->|"no"| TPPP["TP within node + PP across nodes<br/>(TP = GPUs/node, PP = nodes)"]
+    TP --> Q3{"MoE model?"}
+    TPPP --> Q3
+    DP --> Q3
+    Q3 -->|"yes"| EP["add EP for expert layers<br/>(--enable-expert-parallel, EP = TP × DP)"]
+    Q3 -->|"no"| DONE["split for capacity, replicate for throughput"]
+    EP --> DONE
+```
+
 Three shapes to keep:
 
 - **Capacity vs throughput are different problems with different tools.** "Won't fit" → TP/PP/EP (split the model). "Too slow but fits" → DP (replicate). Reaching for the wrong family is the classic mistake.
@@ -131,6 +148,16 @@ vLLM's own strategy for a single model replica, in order:
 
 The through-line: **split only as much as you must for capacity (TP → PP → multi-node), then replicate (DP) for throughput** — and let the **interconnect** (NVLink inside a node, network across nodes) decide where each cut goes.
 
+### 3.6 Reading it in vLLM's source (v0.26.0)
+
+The four splits are config + a handful of layer/coordinator classes (ADR-0002: read + reason, don't rewrite):
+
+- **TP is realized per linear layer**, not by a global switch. The Megatron column/row split of §3.2 is exactly `ColumnParallelLinear` and `RowParallelLinear` in [`vllm/model_executor/layers/linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/linear.py): the row-parallel layer's `forward` ends with `tensor_model_parallel_all_reduce(output_parallel)` — that call **is** the "one all-reduce per matmul, two per block" of §3.2. `QKVParallelLinear` shards attention heads, which is why the TP degree must divide the head count.
+- **The collective + the groups** live in [`vllm/distributed/parallel_state.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/parallel_state.py): `tensor_model_parallel_all_reduce`, and the `GroupCoordinator` you fetch with `get_tp_group()` / `get_pp_group()` — the TP and PP process groups the [next lesson](nccl-and-launching-tp-pp.md) launches.
+- **The knobs** are dataclass fields on **`ParallelConfig`** ([`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py)): `tensor_parallel_size`, `pipeline_parallel_size`, `data_parallel_size` (all default `1`), `enable_expert_parallel` (default `False`), and `distributed_executor_backend` (`mp` / `ray`).
+
+Open `linear.py` and jump to `RowParallelLinear.forward` first — the all-reduce is right there at the bottom of the method.
+
 ## 4 · Complete runnable code + line-by-line
 
 A pure-Python model of the two decisions this lesson is about: **does the model fit on one 24 GB GPU** (and if not, the minimum TP degree), and **how much all-reduce traffic TP pays per token** (the tax that makes it want NVLink). No GPU — this is the arithmetic you should be able to do on a whiteboard.
@@ -208,6 +235,7 @@ Reason your way through the split before you ever rent a second GPU:
 - **Thinking DP saves memory.** DP is a *full copy* per replica — zero per-GPU savings. It's a throughput tool that *requires* the model to already fit.
 - **Treating the four as competitors.** They compose on orthogonal axes: TP×PP×DP×EP. Production serving of a huge MoE uses all four at once.
 - **Using EP for a dense model.** Expert parallelism only means anything for **MoE** — there are no experts to split in a dense model. And in 0.26.0 it's **experimental**, sized as TP×DP, not set directly.
+- **Expecting a monolithic "TP mode" in the code.** There's no single tensor-parallel switch in the forward pass — TP is realized *per layer* by base classes: `ColumnParallelLinear` shards columns, `RowParallelLinear.forward` ends with `tensor_model_parallel_all_reduce` (`linear.py`). A custom layer that subclasses plain `nn.Linear` instead of these gets **no** sharding and silently replicates full weights on every GPU — the all-reduce lives *in* the layer, so the layer must opt in.
 
 ## 7 · Interview links
 
@@ -223,6 +251,7 @@ Further reading:
 - *GPipe* (Huang et al., 2018) and *PipeDream* (Narayanan et al., 2019) — pipeline parallelism and the microbatch/bubble trade-off.
 - *Switch Transformer* (Fedus et al., 2021) — MoE and expert routing, the setting EP exists for.
 - vLLM `docs/serving/parallelism_scaling.md`, `docs/configuration/optimization.md`, `docs/serving/data_parallel_deployment.md`, `docs/serving/expert_parallel_deployment.md` — the `--tensor-parallel-size` / `--pipeline-parallel-size` / `--data-parallel-size` / `--enable-expert-parallel` mechanics and the decision tree quoted here.
+- vLLM source (v0.26.0): [`vllm/model_executor/layers/linear.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/model_executor/layers/linear.py) (`ColumnParallelLinear` / `RowParallelLinear` + `tensor_model_parallel_all_reduce`), [`vllm/distributed/parallel_state.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/distributed/parallel_state.py) (`GroupCoordinator`, `get_tp_group`/`get_pp_group`), [`vllm/config/parallel.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/parallel.py) (`ParallelConfig`) — the TP split + config from §3.6.
 - The [next lesson — NCCL Collective Communication & Launching TP/PP](nccl-and-launching-tp-pp.md) — the collective primitives under TP's per-layer all-reduce, and actually launching TP/PP single- vs multi-node.
 
 ## 9 · Self-check
