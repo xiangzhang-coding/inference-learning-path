@@ -20,4 +20,4 @@
 - **[数值格式：FP16 · BF16 · FP8 · INT8 · INT4](number-formats.md)** — 每种 dtype 背后的范围-vs-精度权衡，为进入量化铺路。
 
 !!! note "脚手架状态"
-    本学习路径按 Part 逐步搭建。**Part 0A**（票 #2、#4）——推理流程、Transformer infra 视角、KV 缓存——与 **Part 0B**（票 #5）——GPU 硬件、度量、数值格式——均已完整成文，各附带联动的面试题。Part 1–8 会在后续票落地。题库随进度增长，见 [面试题库](../interview/index.md)。
+    本学习路径按 Part 逐步搭建。**Part 0A**（票 #2、#4）——推理流程、Transformer infra 视角、KV 缓存——与 **Part 0B**（票 #5）——GPU 硬件、度量、数值格式——均已完整成文，各附带联动的面试题。Part 1–8 会在后续票落地。所有 vLLM flag/API 经 Context7 核实（ADR-0004）；基线为 **vLLM 0.26.0**。题库随进度增长，见 [面试题库](../interview/index.md)。

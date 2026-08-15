@@ -49,19 +49,19 @@ Three shapes to hold:
 
 - **Draft proposes, target verifies, output is exact.** The target checks each proposed token against what *it* would have produced; it accepts the longest correct prefix and emits its own token at the first mismatch. So the result is **bit-identical to vanilla target decoding** — speculative decoding is a speedup, never a quality trade.
 - **The win comes from decode being memory-bound.** Verifying K+1 tokens in one pass costs ~one weight read — the same as producing one token vanilla. You're spending the GPU's *idle* compute (it was memory-bound) to cash in fewer HBM round-trips. On a compute-bound step (large batch), that idle compute isn't there, so the win shrinks.
-- **Speedup is governed by the acceptance rate.** If the draft agrees with the target often (high α), you accept long runs and go fast; if the draft is bad, you reject early, waste the draft cost, and gain little. A good draft is one that's *cheap* **and** *agrees often* — those pull in opposite directions, which is the whole design problem.
+- **Speedup is governed by the acceptance rate.** If the draft agrees with the target often (high $\alpha$), you accept long runs and go fast; if the draft is bad, you reject early, waste the draft cost, and gain little. A good draft is one that's *cheap* **and** *agrees often* — those pull in opposite directions, which is the whole design problem.
 
 ## 3 · Principle
 
 ### 3.1 The accept/reject math
 
-Model each proposed token as accepted with probability α (the per-token agreement rate between draft and target). Speculative sampling accepts the draft's tokens as a **prefix** — the first token with prob α, the first two with prob α², and so on — then the target contributes one guaranteed token at the first rejection. So the expected number of tokens emitted per target forward pass is:
+Model each proposed token as accepted with probability $\alpha$ (the per-token agreement rate between draft and target). Speculative sampling accepts the draft's tokens as a **prefix** — the first token with prob $\alpha$, the first two with prob $\alpha^2$, and so on — then the target contributes one guaranteed token at the first rejection. So the expected number of tokens emitted per target forward pass is:
 
 $$
 \mathbb{E}[\text{tokens per pass}] \;=\; \sum_{i=0}^{K} \alpha^{i} \;=\; \frac{1 - \alpha^{K+1}}{1 - \alpha}
 $$
 
-The $i=0$ term (=1) is the target's guaranteed token; the $\alpha^i$ terms are the drafted tokens that survive. Since vanilla decoding emits exactly 1 token per pass, this expectation **is** the speedup in target forward passes. At α=0.7, K=4 that's ≈2.77 — you do ~2.77× fewer expensive target passes. The formula also shows diminishing returns: past the point where α^i gets small, adding more draft tokens barely helps (and costs more draft compute).
+The $i=0$ term (=1) is the target's guaranteed token; the $\alpha^i$ terms are the drafted tokens that survive. Since vanilla decoding emits exactly 1 token per pass, this expectation **is** the speedup in target forward passes. At $\alpha=0.7$, K=4 that's ≈2.77 — you do ~2.77× fewer expensive target passes. The formula also shows diminishing returns: past the point where $\alpha^i$ gets small, adding more draft tokens barely helps (and costs more draft compute).
 
 ### 3.2 Where the drafts come from
 
@@ -88,7 +88,7 @@ Open `ngram_proposer.py` first — it's the K-token proposer with no model, the 
 
 ## 4 · Complete runnable code + line-by-line
 
-A deterministic, analytic model of the expected tokens-per-target-pass as a function of acceptance rate α and draft length K — the exact quantity that sets the speedup. No GPU, no randomness.
+A deterministic, analytic model of the expected tokens-per-target-pass as a function of acceptance rate $\alpha$ and draft length K — the exact quantity that sets the speedup. No GPU, no randomness.
 
 ```python title="speculative_decoding_model.py"
 """Speculative decoding: draft proposes K tokens, target verifies all in ONE forward pass.
@@ -109,7 +109,7 @@ if __name__ == "__main__":
 **Line-by-line:**
 
 - `tokens_per_target_pass(alpha, k)` — the §3.1 sum $\sum_{i=0}^{k}\alpha^i$. The `i=0` term is the target's guaranteed token (always emitted); `i=1…k` are the drafted tokens that survive verification, each surviving with probability $\alpha^i$ (the whole prefix up to it must match). It equals the closed form $(1-\alpha^{k+1})/(1-\alpha)$.
-- The loop sweeps three **acceptance rates**: a poor draft (α=0.5), a decent one (0.7), a strong one (0.9). Same K=4 each time, so you see how much the *draft quality* — not the token count — drives the speedup.
+- The loop sweeps three **acceptance rates**: a poor draft ($\alpha=0.5$), a decent one (0.7), a strong one (0.9). Same K=4 each time, so you see how much the *draft quality* — not the token count — drives the speedup.
 - Because vanilla decode emits exactly 1 token per target pass, the printed number **is** the speedup factor in expensive target forwards.
 
 Expected output (analytic, deterministic — not a benchmark):
@@ -122,7 +122,7 @@ acceptance alpha=0.7: 2.77 tokens / target pass  -> ~2.77x fewer target forwards
 acceptance alpha=0.9: 4.10 tokens / target pass  -> ~4.10x fewer target forwards
 ```
 
-The lesson is stark: at 90% agreement you nearly quarter your target passes; at 50% you barely break 2× — and that's *before* subtracting draft cost. This is why the entire game is **acceptance rate**: a draft that's cheap but rarely agrees (low α) wins little, while a draft that agrees often (EAGLE, or ngram on repetitive text) is what makes speculative decoding pay. Note these ignore the draft's own cost and any batch-induced compute pressure — real speedups are lower, which is why they're order-of-magnitude references, not promises.
+The lesson is stark: at 90% agreement you nearly quarter your target passes; at 50% you barely break 2× — and that's *before* subtracting draft cost. This is why the entire game is **acceptance rate**: a draft that's cheap but rarely agrees (low $\alpha$) wins little, while a draft that agrees often (EAGLE, or ngram on repetitive text) is what makes speculative decoding pay. Note these ignore the draft's own cost and any batch-induced compute pressure — real speedups are lower, which is why they're order-of-magnitude references, not promises.
 
 ## 5 · Lab — turn it on and watch the acceptance rate
 
@@ -163,10 +163,10 @@ print(llm.generate([prompt], SamplingParams(max_tokens=64, temperature=0))[0].ou
 ## 6 · Common pitfalls / counter-intuitive points
 
 - **Thinking it changes outputs.** It doesn't — verification makes the result **identical** to vanilla target decoding. Speculative decoding is pure latency, never a quality/accuracy trade. (If outputs differ, it's a bug.)
-- **Believing bigger K is always faster.** The $\sum \alpha^i$ has diminishing returns; past a point extra draft tokens rarely survive but always cost draft compute. The right K depends on α — high acceptance justifies a larger K.
+- **Believing bigger K is always faster.** The $\sum \alpha^i$ has diminishing returns; past a point extra draft tokens rarely survive but always cost draft compute. The right K depends on $\alpha$ — high acceptance justifies a larger K.
 - **Using it to raise throughput on a saturated GPU.** It's a *latency* tool. At large batch (compute-bound), the verification compute isn't free and the draft overhead can make you *slower*. Reach for it at low concurrency, not to push a maxed-out batch.
 - **Picking ngram for novel text.** ngram only proposes tokens it can find in the recent context — great for summarization/editing/RAG (output echoes input), near-useless for open-ended generation. Match the draft method to the workload.
-- **Ignoring the draft's cost/quality trade.** A big accurate draft has high α but its own forwards are expensive; a tiny draft is cheap but low α. The sweet spot (why EAGLE exists) is a draft that's *both* cheap and well-aligned to the target.
+- **Ignoring the draft's cost/quality trade.** A big accurate draft has high $\alpha$ but its own forwards are expensive; a tiny draft is cheap but low $\alpha$. The sweet spot (why EAGLE exists) is a draft that's *both* cheap and well-aligned to the target.
 - **Forgetting the draft eats VRAM (except ngram).** A `draft_model`/EAGLE checkpoint sits in the same GPU memory as the target, reducing the [KV-cache budget](paged-attention.md). ngram is the zero-VRAM option.
 - **Assuming any draft config fits any target.** A `draft_model`/EAGLE checkpoint must match the target's family and tokenizer — a mismatched draft tanks acceptance (or fails to load). And `num_speculative_tokens` isn't free-form for every method: for MTP-style drafts vLLM requires it be **divisible by** the draft's `n_predict`, or `SpeculativeConfig` raises at startup. Pick a K the method supports, and a draft trained for *your* target.
 
@@ -194,5 +194,5 @@ Further reading:
 ??? question "Does speculative decoding change the generated text? Justify your answer from the accept/reject rule."
     No — the output is **bit-identical** to what the target would generate alone. The draft only *proposes* tokens; the target then verifies each against its own distribution and accepts the drafted token only where it matches (speculative sampling makes this acceptance exact in distribution), emitting the target's own token at the first mismatch. So every emitted token is one the target itself would have produced — the draft merely lets several of them be confirmed in a single pass. Speculation affects *speed*, never *content*; differing output indicates a bug, not the algorithm.
 
-??? question "Your draft accepts ~50% of tokens (α≈0.5) with K=4 and you see little speedup. Give two levers, and say which draft method you'd try for a summarization workload."
-    From $\mathbb{E}=\sum_{i=0}^{4}\alpha^i$, α=0.5 gives only ~1.94 tokens/pass *before* draft cost — barely 2×, and the draft's own compute eats into it. Two levers: (1) **Raise acceptance α** with a better-aligned draft — the dominant factor; a well-trained **EAGLE** head typically agrees far more often than a generic small draft, lifting the whole $\sum\alpha^i$. (2) **Tune K to α** — with low α, a large K wastes draft compute on tokens that won't survive, so a *smaller* K may net more; with high α, raise K. For a **summarization** workload specifically, try **`ngram`**: the output heavily echoes the input document, so prompt-lookup drafting achieves high acceptance at *zero* draft-model cost and no extra VRAM — often the best choice for copy-heavy tasks.
+??? question "Your draft accepts ~50% of tokens ($\alpha\approx0.5$) with K=4 and you see little speedup. Give two levers, and say which draft method you'd try for a summarization workload."
+    From $\mathbb{E}=\sum_{i=0}^{4}\alpha^i$, $\alpha=0.5$ gives only ~1.94 tokens/pass *before* draft cost — barely 2×, and the draft's own compute eats into it. Two levers: (1) **Raise acceptance $\alpha$** with a better-aligned draft — the dominant factor; a well-trained **EAGLE** head typically agrees far more often than a generic small draft, lifting the whole $\sum\alpha^i$. (2) **Tune K to $\alpha$** — with low $\alpha$, a large K wastes draft compute on tokens that won't survive, so a *smaller* K may net more; with high $\alpha$, raise K. For a **summarization** workload specifically, try **`ngram`**: the output heavily echoes the input document, so prompt-lookup drafting achieves high acceptance at *zero* draft-model cost and no extra VRAM — often the best choice for copy-heavy tasks.

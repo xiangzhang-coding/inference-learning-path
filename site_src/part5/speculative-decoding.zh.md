@@ -49,19 +49,19 @@ sequenceDiagram
 
 - **draft 提议、target 校验、输出精确。** target 用*它自己*会产出的东西核对每个提议 token；它接受最长的正确前缀、在第一个不匹配处吐出它自己的 token。所以结果与 vanilla target decoding **逐位相同**——speculative decoding 是加速，绝非质量权衡。
 - **收益源自 decode 是 memory-bound。** 一次校验 K+1 个 token 代价约等于一次权重读取——与 vanilla 产一个 token 相同。你在花 GPU 的*空闲*计算（它本就 memory-bound）来兑换更少的 HBM 往返。在 compute-bound 的步上（大批），那空闲计算不存在，收益就缩水。
-- **加速由接受率决定。** 若 draft 常与 target 一致（高 α），你接受长串、跑得快；若 draft 差，你早早拒绝、浪费 draft 代价、收益寥寥。好 draft 是*便宜***且***常一致*的——两者相互拉扯，这正是核心设计难题。
+- **加速由接受率决定。** 若 draft 常与 target 一致（高 $\alpha$），你接受长串、跑得快；若 draft 差，你早早拒绝、浪费 draft 代价、收益寥寥。好 draft 是*便宜***且***常一致*的——两者相互拉扯，这正是核心设计难题。
 
 ## 3 · 原理
 
 ### 3.1 接受/拒绝数学
 
-把每个提议 token 建模为以概率 α 被接受（draft 与 target 的每 token 一致率）。Speculative sampling 把 draft 的 token 作为**前缀**接受——第一个以概率 α、前两个以概率 α²，以此类推——然后 target 在第一个拒绝处贡献一个保证的 token。于是每次 target forward 吐出的期望 token 数为：
+把每个提议 token 建模为以概率 $\alpha$ 被接受（draft 与 target 的每 token 一致率）。Speculative sampling 把 draft 的 token 作为**前缀**接受——第一个以概率 $\alpha$、前两个以概率 $\alpha^2$，以此类推——然后 target 在第一个拒绝处贡献一个保证的 token。于是每次 target forward 吐出的期望 token 数为：
 
 $$
 \mathbb{E}[\text{每 pass token 数}] \;=\; \sum_{i=0}^{K} \alpha^{i} \;=\; \frac{1 - \alpha^{K+1}}{1 - \alpha}
 $$
 
-$i=0$ 项（=1）是 target 保证的 token；$\alpha^i$ 项是存活的 draft token。因为 vanilla decoding 每 pass 恰吐 1 个 token，这个期望**就是** target forward 次数上的加速。α=0.7、K=4 时 ≈2.77——你少做约 2.77× 昂贵的 target pass。公式也显示递减收益：过了 α^i 变小的点，再加 draft token 几乎无益（且更费 draft 计算）。
+$i=0$ 项（=1）是 target 保证的 token；$\alpha^i$ 项是存活的 draft token。因为 vanilla decoding 每 pass 恰吐 1 个 token，这个期望**就是** target forward 次数上的加速。$\alpha=0.7$、K=4 时 ≈2.77——你少做约 2.77× 昂贵的 target pass。公式也显示递减收益：过了 $\alpha^i$ 变小的点，再加 draft token 几乎无益（且更费 draft 计算）。
 
 ### 3.2 draft 从哪来
 
@@ -88,7 +88,7 @@ Speculative decoding 在**低批量 / 延迟敏感的单流**上闪光，那里 
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
-一个确定性、解析式的模型，刻画每次 target pass 期望 token 数关于接受率 α 与 draft 长度 K 的函数——正是设定加速的量。无 GPU、无随机。
+一个确定性、解析式的模型，刻画每次 target pass 期望 token 数关于接受率 $\alpha$ 与 draft 长度 K 的函数——正是设定加速的量。无 GPU、无随机。
 
 ```python title="speculative_decoding_model.py"
 """Speculative decoding：draft 提议 K 个 token，target 用一次 forward 校验全部。
@@ -109,7 +109,7 @@ if __name__ == "__main__":
 **逐行讲解：**
 
 - `tokens_per_target_pass(alpha, k)`——§3.1 的和 $\sum_{i=0}^{k}\alpha^i$。`i=0` 项是 target 保证的 token（总吐出）；`i=1…k` 是通过校验存活的 draft token，各以概率 $\alpha^i$ 存活（到它为止的整个前缀必须匹配）。它等于闭式 $(1-\alpha^{k+1})/(1-\alpha)$。
-- 循环扫三个**接受率**：差 draft（α=0.5）、尚可（0.7）、强（0.9）。每次同样 K=4，于是你看到是 *draft 质量*——而非 token 数——驱动加速。
+- 循环扫三个**接受率**：差 draft（$\alpha=0.5$）、尚可（0.7）、强（0.9）。每次同样 K=4，于是你看到是 *draft 质量*——而非 token 数——驱动加速。
 - 因为 vanilla decode 每 target pass 恰吐 1 个 token，打印的数字**就是**昂贵 target forward 上的加速倍数。
 
 预期输出（解析、确定性——不是 benchmark）：
@@ -122,7 +122,7 @@ acceptance alpha=0.7: 2.77 tokens / target pass  -> ~2.77x fewer target forwards
 acceptance alpha=0.9: 4.10 tokens / target pass  -> ~4.10x fewer target forwards
 ```
 
-教训鲜明：90% 一致时你几乎把 target pass 减到四分之一；50% 时勉强过 2×——而且这还是*减去 draft 代价之前*。这就是为什么整个游戏是**接受率**：便宜但少一致（低 α）的 draft 收益寥寥，而常一致（EAGLE，或重复文本上的 ngram）的 draft 才让 speculative decoding 划算。注意这些忽略了 draft 自身代价与任何批量带来的计算压力——真实加速更低，所以它们是量级参考、不是承诺。
+教训鲜明：90% 一致时你几乎把 target pass 减到四分之一；50% 时勉强过 2×——而且这还是*减去 draft 代价之前*。这就是为什么整个游戏是**接受率**：便宜但少一致（低 $\alpha$）的 draft 收益寥寥，而常一致（EAGLE，或重复文本上的 ngram）的 draft 才让 speculative decoding 划算。注意这些忽略了 draft 自身代价与任何批量带来的计算压力——真实加速更低，所以它们是量级参考、不是承诺。
 
 ## 5 · Lab——开启它，看接受率
 
@@ -163,10 +163,10 @@ print(llm.generate([prompt], SamplingParams(max_tokens=64, temperature=0))[0].ou
 ## 6 · 常见坑 / 反直觉点
 
 - **以为它改变输出。** 不——校验使结果与 vanilla target decoding **相同**。Speculative decoding 是纯延迟，绝非质量/精度权衡。（若输出不同，那是 bug。）
-- **相信 K 越大越快。** $\sum \alpha^i$ 有递减收益；过了某点，额外 draft token 很少存活却总耗 draft 计算。正确的 K 取决于 α——高接受率才配大 K。
+- **相信 K 越大越快。** $\sum \alpha^i$ 有递减收益；过了某点，额外 draft token 很少存活却总耗 draft 计算。正确的 K 取决于 $\alpha$——高接受率才配大 K。
 - **用它在打满的 GPU 上提吞吐。** 它是*延迟*工具。大批（compute-bound）时校验计算不免费、draft 开销可能让你*更慢*。在低并发时伸手，别用来推一个已满的批。
 - **对新文本选 ngram。** ngram 只提议它能在近期上下文里找到的 token——摘要/编辑/RAG（输出回响输入）极好，开放式生成几乎无用。让 draft 方法匹配负载。
-- **忽略 draft 的代价/质量权衡。** 大而准的 draft 有高 α 但自身 forward 贵；极小的 draft 便宜但 α 低。甜点（EAGLE 存在的原因）是一个*既*便宜*又*与 target 良好对齐的 draft。
+- **忽略 draft 的代价/质量权衡。** 大而准的 draft 有高 $\alpha$ 但自身 forward 贵；极小的 draft 便宜但 $\alpha$ 低。甜点（EAGLE 存在的原因）是一个*既*便宜*又*与 target 良好对齐的 draft。
 - **忘了 draft 吃 VRAM（ngram 除外）。** `draft_model`/EAGLE 检查点与 target 同占 GPU 显存，减少 [KV-cache 预算](paged-attention.md)。ngram 是零 VRAM 选项。
 - **以为任意 draft 配置都配任意 target。** `draft_model`/EAGLE 检查点必须与 target 同族、同 tokenizer——不匹配的 draft 会拉垮接受率（或干脆加载失败）。而 `num_speculative_tokens` 并非对每种 method 都可随意取：对 MTP 式 draft，vLLM 要求它能**整除** draft 的 `n_predict`，否则 `SpeculativeConfig` 会在启动时报错。选一个该 method 支持的 K，以及一个为*你的* target 训练的 draft。
 
@@ -194,5 +194,5 @@ print(llm.generate([prompt], SamplingParams(max_tokens=64, temperature=0))[0].ou
 ??? question "Speculative decoding 会改变生成文本吗？用接受/拒绝规则论证。"
     不——输出与 target 单独生成的**逐位相同**。draft 只*提议* token；target 随后用自己的分布校验每个、只在匹配处接受 draft token（speculative sampling 让这种接受在分布上精确），在第一个不匹配处吐出 target 自己的 token。所以每个吐出的 token 都是 target 自己本会产出的——draft 只是让其中几个在一次 pass 里被确认。推测影响*速度*，绝不影响*内容*；输出不同意味着 bug，不是算法。
 
-??? question "你的 draft 接受约 50% token（α≈0.5）、K=4，却几乎没加速。给两个杠杆，并说对摘要负载你会试哪种 draft 方法。"
-    由 $\mathbb{E}=\sum_{i=0}^{4}\alpha^i$，α=0.5 只给约 1.94 token/pass——*减去 draft 代价之前*——勉强 2×，draft 自身计算还要吃掉一部分。两个杠杆：（1）用更对齐的 draft **提高接受率 α**——主导因素；训练良好的 **EAGLE** 头通常比通用小 draft 一致得多，抬升整个 $\sum\alpha^i$。（2）**按 α 调 K**——低 α 时大 K 把 draft 计算浪费在不会存活的 token 上，所以*更小*的 K 可能净收益更多；高 α 时才提高 K。对**摘要**负载具体地，试 **`ngram`**：输出大量回响输入文档，所以 prompt-lookup 起草以*零* draft 模型代价、无额外 VRAM 达成高接受率——对复制重的任务常是最佳选择。
+??? question "你的 draft 接受约 50% token（$\alpha\approx0.5$）、K=4，却几乎没加速。给两个杠杆，并说对摘要负载你会试哪种 draft 方法。"
+    由 $\mathbb{E}=\sum_{i=0}^{4}\alpha^i$，$\alpha=0.5$ 只给约 1.94 token/pass——*减去 draft 代价之前*——勉强 2×，draft 自身计算还要吃掉一部分。两个杠杆：（1）用更对齐的 draft **提高接受率 $\alpha$**——主导因素；训练良好的 **EAGLE** 头通常比通用小 draft 一致得多，抬升整个 $\sum\alpha^i$。（2）**按 $\alpha$ 调 K**——低 $\alpha$ 时大 K 把 draft 计算浪费在不会存活的 token 上，所以*更小*的 K 可能净收益更多；高 $\alpha$ 时才提高 K。对**摘要**负载具体地，试 **`ngram`**：输出大量回响输入文档，所以 prompt-lookup 起草以*零* draft 模型代价、无额外 VRAM 达成高接受率——对复制重的任务常是最佳选择。

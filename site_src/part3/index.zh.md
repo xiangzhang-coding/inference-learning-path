@@ -19,4 +19,4 @@ GPU 编程术语见 **[术语表](../glossary.md)**。
 - **[读 vLLM 的 PagedAttention kernel](paged-attention-kernel.md)** —— 虚拟内存思想（KV 块 + block table）、kernel 如何逐块 gather KV 并用 online softmax 折进来，以及一份 paged == dense attention 的纯 Python 证明。
 
 !!! note "脚手架状态"
-    Part 3 已完成：四节课（票 #8、#9）全部写就，各带一道双向链接的面试题——GPU 编程心智模型（执行模型、访存）与动手那一半（Triton kernel、读 PagedAttention kernel）。手写 / 优化 CUDA C++ 仍不在范围（ADR-0002）；PagedAttention 的*服务*深挖（continuous batching、block manager）在 **Part 5** 落地。链接题集见 [面试题库](../interview/index.md)。
+    Part 3 已完成：四节课（票 #8、#9）全部写就，各带一道双向链接的面试题——GPU 编程心智模型（执行模型、访存）与动手那一半（Triton kernel、读 PagedAttention kernel）。手写 / 优化 CUDA C++ 仍不在范围（ADR-0002）；PagedAttention 的*服务*深挖（continuous batching、block manager）在 **Part 5** 落地。所有 vLLM flag/API 经 Context7 核实（ADR-0004）；基线为 **vLLM 0.26.0**。链接题集见 [面试题库](../interview/index.md)。

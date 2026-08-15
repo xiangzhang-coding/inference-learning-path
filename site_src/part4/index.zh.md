@@ -19,4 +19,4 @@ KV-cache 量化直接连回 **[KV 缓存](../part0/kv-cache.md)**。
 - **[动手：把 Qwen2.5-7B 量化成 INT4、在 vLLM 里服务、对比质量与吞吐](quantization-lab.md)** —— 完整可跑路径：用 llm-compressor（或预量化 AWQ checkpoint）量化、服务（自动检测）、在小评测集上 A/B 质量并测吞吐。
 
 !!! note "脚手架状态"
-    Part 4 已完成：四节课（票 #10、#11）全部写就，各带一道双向链接的面试题——原理（[基础](quantization-basics.md)、[方案](quantization-schemes.md)）与应用那一半（[方法族](quantization-methods.md)、[动手 INT4 实操](quantization-lab.md)）。手写 CUDA kernel 仍不在范围（ADR-0002）；把释放的 VRAM 花在并发上是 **Part 5**。量化术语见 **[术语表](../glossary.md)**，链接题集见 [面试题库](../interview/index.md)。
+    Part 4 已完成：四节课（票 #10、#11）全部写就，各带一道双向链接的面试题——原理（[基础](quantization-basics.md)、[方案](quantization-schemes.md)）与应用那一半（[方法族](quantization-methods.md)、[动手 INT4 实操](quantization-lab.md)）。手写 CUDA kernel 仍不在范围（ADR-0002）；把释放的 VRAM 花在并发上是 **Part 5**。所有 vLLM flag/API 经 Context7 核实（ADR-0004）；基线为 **vLLM 0.26.0**。量化术语见 **[术语表](../glossary.md)**，链接题集见 [面试题库](../interview/index.md)。

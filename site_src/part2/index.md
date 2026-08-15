@@ -19,4 +19,4 @@ The hardware primer this builds on — the [memory hierarchy & roofline](../part
 - **[Kernel Fusion & CUDA Graphs: Killing Decode Launch Overhead](kernel-fusion-cuda-graphs.md)** — why hundreds of tiny decode kernels make the step launch-bound, and how fusion and CUDA-graph replay collapse the overhead.
 
 !!! note "Scaffolding status"
-    Part 2 is complete: all four lessons (tickets #6, #7) are written, each with a two-way-linked interview question. Next up is **Part 3 · GPU Programming (Triton)**. See the [Interview Bank](../interview/index.md) for the linked question set.
+    Part 2 is complete: all four lessons (tickets #6, #7) are written, each with a two-way-linked interview question. Next up is **Part 3 · GPU Programming (Triton)**. All vLLM flags/APIs are verified via Context7 (ADR-0004); the baseline is **vLLM 0.26.0**. See the [Interview Bank](../interview/index.md) for the linked question set.

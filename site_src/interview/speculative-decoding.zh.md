@@ -14,15 +14,15 @@
 
 它近乎免费**只因 [decode 是 memory-bound](../part0/inference-flow.md)**：target 对 K+1 个 token 的 forward 只读权重**一次**（与一个 token 相同），用 GPU 本来空闲的计算处理额外位置。把空闲 FLOPs → 更少 HBM 往返。
 
-**加速 = 期望接受串长** $\sum_{i=0}^{K}\alpha^i=(1-\alpha^{K+1})/(1-\alpha)$，α 是每 token 的 draft/target 一致率。α=0.7、K=4 时 ≈ 2.77× 更少 target pass。
+**加速 = 期望接受串长** $\sum_{i=0}^{K}\alpha^i=(1-\alpha^{K+1})/(1-\alpha)$，$\alpha$ 是每 token 的 draft/target 一致率。$\alpha=0.7$、K=4 时 ≈ 2.77× 更少 target pass。
 
 **它反噬**在批变 compute-bound 时：那「空闲」计算现被服务批用掉，校验额外 token 不再免费，draft 开销可能让你*更慢*。它是低批量**延迟**工具，不是吞吐工具。
 
 ### 深入原理
 
 - **draft 来源**（`method`）：`ngram`（prompt-lookup，无 draft 模型——输出回响输入时极好：摘要/RAG/编辑）、`eagle`/`eagle3`（训练过的小头，高接受率、小 VRAM——现代默认）、`draft_model`（独立小模型，更通用但自身 forward 更贵）。`num_speculative_tokens` = K。
-- **接受率就是一切。** 便宜但少一致（低 α）的 draft 收益寥寥；设计张力是一个*既*便宜*又*常一致的 draft（EAGLE 存在的原因）。
-- **K 的递减。** $\sum\alpha^i$ 饱和；过了某点，额外 draft token 很少存活却总耗 draft 计算。按 α 调 K。
+- **接受率就是一切。** 便宜但少一致（低 $\alpha$）的 draft 收益寥寥；设计张力是一个*既*便宜*又*常一致的 draft（EAGLE 存在的原因）。
+- **K 的递减。** $\sum\alpha^i$ 饱和；过了某点，额外 draft token 很少存活却总耗 draft 计算。按 $\alpha$ 调 K。
 - **VRAM。** `draft_model`/EAGLE 检查点与 target 同占 GPU 显存，缩小 [KV-cache 预算](../part5/paged-attention.md)；`ngram` 是零 VRAM 选项。
 
 ### 代码
@@ -41,9 +41,9 @@ for a in (0.5, 0.7, 0.9):
 
 - *「它伤质量吗？」* → 不——校验使输出与 target 单独相同。纯延迟。
 - *「为何在大批时消退？」* → decode 转 compute-bound；让校验免费的空闲计算没了，draft 开销收不回。
-- *「K 越大越好？」* → 不——$\sum\alpha^i$ 递减；低 α 上大 K 浪费 draft 计算。按 α 匹配 K。
+- *「K 越大越好？」* → 不——$\sum\alpha^i$ 递减；低 $\alpha$ 上大 K 浪费 draft 计算。按 $\alpha$ 匹配 K。
 - *「摘要用哪种方法？」* → `ngram`——输出回响输入，prompt-lookup 以零 draft 模型代价/无额外 VRAM 常命中。
-- *「最大的单一杠杆？」* → 接受率 α（draft/target 对齐）——它主导整个 $\sum\alpha^i$。
+- *「最大的单一杠杆？」* → 接受率 $\alpha$（draft/target 对齐）——它主导整个 $\sum\alpha^i$。
 
 ### 关联概念
 
