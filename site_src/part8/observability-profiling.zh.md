@@ -39,6 +39,20 @@
    规则：在 ① 检测、在 ② 定位、在 ③ 解释。永远别从 ③ 开始。
 ```
 
+上面的三层表是一张语言中立的结构（ASCII，按 ADR-0005）。而*分级升级*——检测 → 定位 → 解释、永远别从 ③ 起——是一个决策流，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    P["p99 latency alert"] --> M["Tier 1 metrics (/metrics): queue depth, gpu_cache_usage_perc,<br/>prefill vs decode split"]
+    M --> Q{"localized to a stage?"}
+    Q -->|"yes"| DONE1["act: route/autoscale, tune KV, adjust batch width"]
+    Q -->|"no — need per-request detail"| T["Tier 2 traces (OpenTelemetry to Jaeger):<br/>queue / prefill / decode spans, sampled"]
+    T --> Q2{"stage slow for no clear reason?"}
+    Q2 -->|"no"| DONE1
+    Q2 -->|"yes"| PR["Tier 3 profile (torch / nsys), on-demand:<br/>the hot kernel or operator"]
+    PR --> DONE2["explain and fix the kernel-level cause"]
+```
+
 三个要记住的形状：
 
 - **指标检测；profile 解释。** 仪表盘告诉你 p99 TTFT 翻倍、队列变深——那是*告警*、不是*诊断*。profiler 告诉你某个具体 kernel 回归了——那是诊断，但收集它有真实开销，所以只在指标指到那个盒子后才付。
@@ -75,6 +89,16 @@
 - **Nsight Systems（`nsys`）。** 看 CUDA 级时间线（kernel 时长、空隙、CUDA-graph replay、NCCL）：`nsys profile --trace-fork-before-exec=true --cuda-graph-trace=node --capture-range=cudaProfilerApi --capture-range-end repeat vllm serve … --profiler-config.profiler cuda`，客户端的 `--profile` 标出捕获范围。`--capture-range=cudaProfilerApi` 就是把 trace 限在你关心的窗口、而非整个 run 的关键。
 
 规则：指标说*decode 里有问题*；profiler 说*这个 attention kernel 是代价*——你只在层 ① / ② 把目标缩窄后，才付层 ③ 的开销。
+
+### 3.4 在 vLLM 源码里读它（v0.26.0）
+
+每一层都对应引擎里一个具体位置（ADR-0002：读懂 + 会推，不重写）：
+
+- **① 指标**由 [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) 里的 stat logger 发出：**`LoggingStatLogger`**（周期日志行）与 **`PrometheusStatLogger`**（`/metrics` feed）——后者正是 §3.1 的 `vllm:num_requests_waiting`、`gpu_cache_usage_perc` 与 TTFT/prefill/decode 直方图声明处。它们聚合的每次迭代数值来自 [`vllm/v1/metrics/stats.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/stats.py)。
+- **② trace** 由 **`ObservabilityConfig`**（[`vllm/config/observability.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/observability.py)）配置：`otlp_traces_endpoint` 就是 §3.2 的 OTLP 目标，且有一个校验器强制 `collect_detailed_traces` 必须配该 endpoint——「采样、别全 trace」的护栏就在这里。
+- **③ profile** 是 [`vllm/entrypoints/openai/api_server.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/api_server.py) 里的 `/start_profile` 与 `/stop_profile` 路由——由 `--profiler-config` 武装，但在你 POST 它们之前什么都不录（§3.3 的按需契约）。
+
+先打开 `loggers.py`：`PrometheusStatLogger` 是定义你仪表盘与 autoscaler 所读每个 gauge/histogram 的那一个类。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -147,6 +171,7 @@ vllm bench serve --backend vllm --model Qwen/Qwen2.5-7B-Instruct \
 - **`nsys` 不加 `--capture-range`。** trace 整个进程会产出不可读的几 GB 文件。用 `--capture-range=cudaProfilerApi` 把它限在客户端的 `--profile` 窗口。
 - **trace 100% 的流量。** 详细 OpenTelemetry span 可能涉及昂贵/阻塞操作；采样。对每个请求全保真 tracing 本身会变成延迟问题。
 - **按 GPU 利用率告警。** 如[路由/扩缩](routing-autoscaling.md)所述，利用率对 memory-bound 的 decode 会误导。对**队列深度**、**p99 TTFT/TPOT**、**`gpu_cache_usage_perc`**、**abort 率**告警——跟踪 SLO 的信号。
+- **以为 `--profiler-config` 本身就在录。** 武装 profiler 与*捕获*是两步：`--profiler-config` 只*启用*机制——在你 POST **`/start_profile`** 前 trace 一直是空的，直到 **`/stop_profile`** 才写出（两者都在 `api_server.py`）。带着 flag 启动却忘了 endpoint 会得到零 trace；让它对所有流量一直录则得到数 GB 的转储。启用 ≠ 在录。
 
 ## 7 · 面试连线
 
@@ -161,6 +186,7 @@ vllm bench serve --backend vllm --model Qwen/Qwen2.5-7B-Instruct \
 - vLLM `docs/design/metrics.md` —— 完整指标列表、直方图、OpenTelemetry tracing 配置。
 - vLLM `examples/observability/prometheus_grafana` 与 `examples/observability/opentelemetry` —— 此处引用的复制粘贴监控与 tracing 栈。
 - vLLM `docs/contributing/profiling.md` —— torch-profiler 的 `--profiler-config` 与 Nsight 的 `nsys` 配方。
+- vLLM 源码（v0.26.0）：[`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py)（`LoggingStatLogger` / `PrometheusStatLogger`——gauge + 直方图）、[`vllm/v1/metrics/stats.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/stats.py)（每次迭代的 stats）、[`vllm/config/observability.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/observability.py)（`ObservabilityConfig.otlp_traces_endpoint`）——§3.4 的 ①/② 层接口。
 - [下一节](slo-driven-tuning.md) —— 把这些信号变成 SLO 驱动的调优闭环。
 
 ## 9 · 自测小问

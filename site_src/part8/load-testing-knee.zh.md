@@ -38,6 +38,19 @@
    knee 之上: 饱和 + 排队   → 吞吐走平、延迟 ↑↑   (goodput 崩)
 ```
 
+上面两条曲线是定量图（ASCII，按 ADR-0005）。而定位 knee 的*扫描流程*是一个控制回路，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    START["pick SLO (e.g. p99 TTFT under 500 ms)"] --> R["set request-rate = next step (2, 4, 8, 16, ...)"]
+    R --> RUN["vllm bench serve --request-rate (open-loop, Poisson arrivals)"]
+    RUN --> READ["read p99 TTFT / E2EL and goodput"]
+    READ --> Q{"still meets SLO and goodput rising?"}
+    Q -->|"yes"| REC["record this rate as knee-so-far"]
+    REC --> R
+    Q -->|"no"| KNEE["knee = last passing rate<br/>(past it the queue runs away — Little's Law)"]
+```
+
 三个要记住的形状：
 
 - **knee 就是队列开始的地方。** 在它之下，到达的请求在运行 batch 里找到空槽（`num_requests_waiting == 0`）。到 knee，batch 满了；下一个请求**等**。就那一个 gauge——`vllm:num_requests_waiting` 离开零往上爬——*就是* knee，实时的。
@@ -87,6 +100,15 @@ $$
 ### 3.4 sweep
 
 方法：固定 workload 形状（输入/输出长度用 `--random-input-len` / `--random-output-len`，或用真实数据集），**把 `--request-rate` 往上一档档加**——例如 2、4、8、16、32 请求/秒。每档记 p99 TTFT、p99 E2EL、goodput。**knee** 是 p99 延迟仍满足 SLO 且 goodput 仍在涨的最后一档；下一档就是延迟跳变、goodput 走平或下降之处。把*那个*速率作为实例容量报告。
+
+### 3.5 在 vLLM 源码里读它（v0.26.0）
+
+§3.1 的开环-vs-饱和之分是一条真实代码路径（ADR-0002：读懂 + 会推，不重写）：
+
+- **`vllm bench serve`** 是 [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py)。它的请求生成器正实现 §3.1：有限 `--request-rate` 且默认 `burstiness = 1.0` 时，到达间隔**服从 Poisson 过程**；`burstiness` 非 1 则切到 **gamma** 分布（越小越 bursty）。`--request-rate inf` 跳过间隔、一次全发——即饱和测试。
+- **goodput 是算出来的，不是猜的。** `serve.py` 的 metrics 带一个 `request_goodput` 字段与一个 `calculate_metrics` 步骤，按你传入的 SLO 校验每个请求——§3.2「满足 SLO 的吞吐」的落地，所以工具本身就报出 knee 所依据的那个数字。
+
+先打开 `serve.py` 找到到达率生成器：`burstiness`/Poisson 分支就是 §3.1 的开环模型，约 10 行。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -174,6 +196,7 @@ print(f"\nKnee ≈ {knee} req/s at p99 TTFT ≤ {SLO_P99_TTFT_MS} ms（示例—
 - **prompt 太少 / 无热身。** Little 定律是**稳态**恒等式。被冷缓存与爬坡主导的短 run 测的是瞬态、不是平台。用足 `--num-prompts` 并先热 server。
 - **压 `localhost` 撞上 IPv6 怪象。** vLLM 自己的工具建议用 `127.0.0.1` 而非 `localhost`，避免拖慢延迟的 IPv6 解析卡顿。小事，真伪影。
 - **忘了 workload 形状是答案的一部分。** 512-in/128-out 的 knee 不是 4k-in/1k-out 的 knee——prefill-heavy vs decode-heavy 饱和不同资源。把输入/输出长度（或数据集）随 knee 一起固定并报告，否则数字不可迁移。
+- **以为有限 `--request-rate` 就是均匀到达。** 在 `serve.py` 里，有限速率配默认 `burstiness = 1.0` 会把请求按 **Poisson** 过程排开——随机间隔，而非等距节拍——这正是队列能在均值速率 knee 之下瞬时飙起来的原因。想要更平滑（不那么 bursty）的到达就设 `burstiness > 1`（gamma）；`burstiness < 1` 更 bursty。报 knee 却不说到达模型，就藏了这份方差。
 
 ## 7 · 面试连线
 
@@ -190,6 +213,7 @@ print(f"\nKnee ≈ {knee} req/s at p99 TTFT ≤ {SLO_P99_TTFT_MS} ms（示例—
 - Little, J. D. C. (1961)，*A Proof for the Queuing Formula $L = \lambda W$* —— 竖墙背后的恒等式。
 - [调参旋钮 sweep](../part5/tuning-knobs-sweep.md) —— 同样的 sweep 纪律用在*移动* knee 的引擎旋钮上。
 - [下一节](routing-autoscaling.md) —— 撞上 knee 之后怎么办：加实例、跨它们路由。
+- vLLM 源码（v0.26.0）：[`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) —— §3.5 的 `--request-rate` 到达生成器（`burstiness`/Poisson vs gamma）、`request_goodput`、`calculate_metrics`。
 
 ## 9 · 自测小问
 

@@ -39,6 +39,20 @@ Three tiers, each a deeper zoom at a higher cost — reach for the next only whe
    RULE: detect at ①, localize at ②, explain at ③. Never start at ③.
 ```
 
+The three-tier table above is a language-neutral structure (ASCII per ADR-0005). The *triage escalation* — detect → localize → explain, never start at tier ③ — is a decision flow, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    P["p99 latency alert"] --> M["Tier 1 metrics (/metrics): queue depth, gpu_cache_usage_perc,<br/>prefill vs decode split"]
+    M --> Q{"localized to a stage?"}
+    Q -->|"yes"| DONE1["act: route/autoscale, tune KV, adjust batch width"]
+    Q -->|"no — need per-request detail"| T["Tier 2 traces (OpenTelemetry to Jaeger):<br/>queue / prefill / decode spans, sampled"]
+    T --> Q2{"stage slow for no clear reason?"}
+    Q2 -->|"no"| DONE1
+    Q2 -->|"yes"| PR["Tier 3 profile (torch / nsys), on-demand:<br/>the hot kernel or operator"]
+    PR --> DONE2["explain and fix the kernel-level cause"]
+```
+
 Three shapes to keep:
 
 - **Metrics detect; profiles explain.** A dashboard tells you p99 TTFT doubled and the queue is deep — that's an *alert*, not a *diagnosis*. The profiler tells you a specific kernel regressed — that's the diagnosis, but it costs real overhead to collect, so you only run it once metrics point you at the box.
@@ -75,6 +89,16 @@ When a *stage* is slow and you need the *kernel*, profile — on-demand:
 - **Nsight Systems (`nsys`).** For the CUDA-level timeline (kernel durations, gaps, CUDA-graph replay, NCCL): `nsys profile --trace-fork-before-exec=true --cuda-graph-trace=node --capture-range=cudaProfilerApi --capture-range-end repeat vllm serve … --profiler-config.profiler cuda`, with the client's `--profile` flag marking the capture range. `--capture-range=cudaProfilerApi` is what keeps the trace to the window you care about instead of the whole run.
 
 The rule: metrics say *there's a problem in decode*; the profiler says *this attention kernel is the cost* — you only pay tier ③'s overhead after tiers ① / ② have narrowed the target.
+
+### 3.4 Reading it in vLLM's source (v0.26.0)
+
+Each tier maps to a specific place in the engine (ADR-0002: read + reason, don't rewrite):
+
+- **Tier ① metrics** are emitted by the stat loggers in [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py): **`LoggingStatLogger`** (the periodic log lines) and **`PrometheusStatLogger`** (the `/metrics` feed) — the latter is where `vllm:num_requests_waiting`, `gpu_cache_usage_perc`, and the TTFT/prefill/decode histograms of §3.1 are actually declared. The per-iteration numbers they aggregate come from [`vllm/v1/metrics/stats.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/stats.py).
+- **Tier ② traces** are configured by **`ObservabilityConfig`** in [`vllm/config/observability.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/observability.py): `otlp_traces_endpoint` is the OTLP target of §3.2, and a validator enforces that `collect_detailed_traces` requires that endpoint — the "sample, don't trace everything" guard rail lives right here.
+- **Tier ③ profiles** are the `/start_profile` and `/stop_profile` routes in [`vllm/entrypoints/openai/api_server.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/api_server.py) — enabled by `--profiler-config` but recording nothing until you POST to them (the on-demand contract of §3.3).
+
+Open `loggers.py` first — `PrometheusStatLogger` is the single class that defines every gauge/histogram your dashboard and autoscaler read.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -147,6 +171,7 @@ Steps:
 - **`nsys` without `--capture-range`.** Tracing the whole process produces an unreadable multi-GB file. Scope it to the client's `--profile` window with `--capture-range=cudaProfilerApi`.
 - **Tracing 100% of traffic.** Detailed OpenTelemetry spans can involve costly/blocking work; sample them. Full-fidelity tracing on every request can itself become the latency problem.
 - **Alerting on GPU utilization.** As in [routing/autoscaling](routing-autoscaling.md), util misleads for memory-bound decode. Alert on **queue depth**, **p99 TTFT/TPOT**, **`gpu_cache_usage_perc`**, and **abort rate** — signals that track the SLO.
+- **Thinking `--profiler-config` alone is recording.** Arming the profiler and *capturing* are two steps: `--profiler-config` (parsed into `ObservabilityConfig`-adjacent profiler settings) only *enables* the machinery — the trace stays empty until you POST **`/start_profile`** and is written on **`/stop_profile`** (both in `api_server.py`). Launching with the flag and forgetting the endpoints yields no trace; leaving it recording across all traffic yields a multi-GB dump. Enabled ≠ recording.
 
 ## 7 · Interview links
 
@@ -161,6 +186,7 @@ Further reading:
 - vLLM `docs/design/metrics.md` — the full metric list, the histograms, and the OpenTelemetry tracing configuration.
 - vLLM `examples/observability/prometheus_grafana` and `examples/observability/opentelemetry` — the copy-paste monitoring and tracing stacks quoted here.
 - vLLM `docs/contributing/profiling.md` — the torch-profiler `--profiler-config` and the Nsight `nsys` recipe.
+- vLLM source (v0.26.0): [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) (`LoggingStatLogger` / `PrometheusStatLogger` — the gauges + histograms), [`vllm/v1/metrics/stats.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/stats.py) (the per-iteration stats), [`vllm/config/observability.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/config/observability.py) (`ObservabilityConfig.otlp_traces_endpoint`) — the tier-①/② surfaces from §3.4.
 - The [next lesson](slo-driven-tuning.md) — turning these signals into an SLO-driven tuning loop.
 
 ## 9 · Self-check

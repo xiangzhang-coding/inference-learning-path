@@ -38,6 +38,19 @@ Sweep the offered load from low to high and plot two things against it: **throug
    ABOVE knee: saturated + queued → throughput flat, latency ↑↑    (goodput COLLAPSES)
 ```
 
+The two curves above are quantitative (ASCII per ADR-0005). The *sweep procedure* that locates the knee is a control loop, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    START["pick SLO (e.g. p99 TTFT under 500 ms)"] --> R["set request-rate = next step (2, 4, 8, 16, ...)"]
+    R --> RUN["vllm bench serve --request-rate (open-loop, Poisson arrivals)"]
+    RUN --> READ["read p99 TTFT / E2EL and goodput"]
+    READ --> Q{"still meets SLO and goodput rising?"}
+    Q -->|"yes"| REC["record this rate as knee-so-far"]
+    REC --> R
+    Q -->|"no"| KNEE["knee = last passing rate<br/>(past it the queue runs away — Little's Law)"]
+```
+
 Three shapes to keep:
 
 - **The knee is where the queue begins.** Below it, an arriving request finds a free slot in the running batch (`num_requests_waiting == 0`). At the knee the batch is full; the next request **waits**. That single gauge — `vllm:num_requests_waiting` climbing off zero — *is* the knee, live.
@@ -87,6 +100,15 @@ So the knee is precisely $\lambda \approx \mu$: the arrival rate that matches th
 ### 3.4 The sweep
 
 The method: hold the workload shape fixed (input/output lengths via `--random-input-len` / `--random-output-len`, or a real dataset), and **step `--request-rate` up** — e.g. 2, 4, 8, 16, 32 req/s. At each step record p99 TTFT, p99 E2EL, and goodput. The **knee** is the last rate where p99 latency still meets the SLO and goodput is still rising; the next step is where latency jumps and goodput flattens or falls. Report *that* rate as the instance's capacity.
+
+### 3.5 Reading it in vLLM's source (v0.26.0)
+
+The open-loop-vs-saturation distinction of §3.1 is a real code path (ADR-0002: read + reason, don't rewrite):
+
+- **`vllm bench serve`** is [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py). Its request generator implements exactly §3.1: with a finite `--request-rate` and the default `burstiness = 1.0` the inter-arrival gaps **follow a Poisson process**; a `burstiness` other than 1 switches to a **gamma** distribution (lower = burstier). `--request-rate inf` skips the spacing and fires everything at once — the saturation test.
+- **Goodput is computed, not guessed.** `serve.py`'s metrics carry a `request_goodput` field and a `calculate_metrics` step that validates each request against the SLO you pass — the §3.2 "throughput that meets the SLO" made concrete, so the tool itself reports the number the knee is defined by.
+
+Open `serve.py` and find the arrival-rate generator first — the `burstiness`/Poisson branch is the open-loop model of §3.1 in ~10 lines.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -174,6 +196,7 @@ Steps:
 - **Too few prompts / no warm-up.** Little's Law is a **steady-state** identity. A short run dominated by cold caches and ramp-up measures a transient, not the plateau. Use enough `--num-prompts` and warm the server first.
 - **Benchmarking over `localhost` and hitting IPv6 weirdness.** vLLM's own tooling recommends `127.0.0.1` over `localhost` to avoid IPv6 resolution stalls that skew latency. Small thing, real artifact.
 - **Forgetting the workload shape is part of the answer.** The knee for 512-in/128-out is not the knee for 4k-in/1k-out — prefill-heavy vs decode-heavy workloads saturate different resources. Fix and report the input/output lengths (or the dataset) alongside the knee, or the number doesn't transfer.
+- **Assuming a finite `--request-rate` means uniform arrivals.** In `serve.py` a finite rate with the default `burstiness = 1.0` spaces requests as a **Poisson** process — random gaps, not evenly-spaced ticks — which is *why* the queue can spike transiently below the mean-rate knee. If you want smoother (less bursty) arrivals set `burstiness > 1` (gamma); `burstiness < 1` is burstier. Reporting a knee without noting the arrival model hides this variance.
 
 ## 7 · Interview links
 
@@ -190,6 +213,7 @@ Further reading:
 - Little, J. D. C. (1961), *A Proof for the Queuing Formula $L = \lambda W$* — the identity behind the wall.
 - The [tuning-knobs sweep](../part5/tuning-knobs-sweep.md) — the same sweep discipline applied to the engine knobs that *move* the knee.
 - The [next lesson](routing-autoscaling.md) — what to do once you've hit the knee: add instances and route across them.
+- vLLM source (v0.26.0): [`vllm/benchmarks/serve.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/benchmarks/serve.py) — the `--request-rate` arrival generator (`burstiness`/Poisson vs gamma), `request_goodput`, and `calculate_metrics` from §3.5.
 
 ## 9 · Self-check
 

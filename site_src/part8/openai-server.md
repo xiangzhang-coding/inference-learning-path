@@ -39,6 +39,23 @@ One binary, two halves: an **HTTP frontend** you can see from `curl`, and the **
                      --max-model-len  --gpu-memory-utilization      ← sets the ceiling you measure
 ```
 
+The frontend/backend split above is a topology (ASCII per ADR-0005). One request's *lifecycle* through the two halves is an interaction, so Mermaid `sequenceDiagram`:
+
+```mermaid
+sequenceDiagram
+    participant C as Client (openai SDK)
+    participant S as API server (FastAPI)
+    participant E as Engine core (scheduler + workers)
+    C->>S: POST /v1/chat/completions (Bearer key, stream=true)
+    Note over S: auth, validate, apply chat template
+    S->>E: add request to the running batch
+    E->>E: continuous batching — prefill then decode
+    E-->>S: first token (at ~TTFT)
+    S-->>C: SSE data chunk
+    E-->>S: next tokens (paced by TPOT)
+    S-->>C: SSE data chunks ... then data [DONE]
+```
+
 Three shapes to keep:
 
 - **The server is a frontend; the engine is the backend.** The HTTP layer is cheap and stateless-ish (auth, JSON parsing, chat-template rendering, SSE streaming). The expensive, stateful part — the KV cache, the running batch — lives in the engine core. When latency spikes, it's almost never the FastAPI layer; it's the queue in front of the scheduler (the [next lesson](load-testing-knee.md)).
@@ -91,6 +108,16 @@ The same `vllm serve` command carries two families of flags. The **interface** k
 - **`--gpu-memory-utilization`** — fraction of VRAM vLLM may claim; more → a bigger KV-cache block pool → higher concurrency.
 
 These four set the **ceiling** of a single instance. The [next lesson](load-testing-knee.md) is entirely about *measuring* where that ceiling is; the lesson after that is about *raising* it by running more instances.
+
+### 3.5 Reading it in vLLM's source (v0.26.0)
+
+The "thin frontend over the engine core" is literally the file layout (ADR-0002: read + reason, don't rewrite):
+
+- **The frontend** is [`vllm/entrypoints/openai/api_server.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/api_server.py) — the FastAPI app that mounts the routes and streams SSE. It registers an `EngineDeadError` exception handler, which is exactly what makes **`/health`** return 503 when the engine has died (§2).
+- **Each endpoint is a serving handler.** `/v1/chat/completions` → **`OpenAIServingChat`** ([`chat_completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/chat_completion/serving.py)) — note its `chat_template` constructor arg: this is the class that *applies the chat template* (§3.2). `/v1/completions` → **`OpenAIServingCompletion`** ([`completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/completion/serving.py)) — raw text, no template. `/v1/models` → **`OpenAIServingModels`** ([`models/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/models/serving.py)).
+- **The interface flags** (`--api-key`, `--served-model-name`, `--host`/`--port`) are defined in [`vllm/entrypoints/openai/cli_args.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/cli_args.py).
+
+Open `api_server.py` first, then jump to `chat_completion/serving.py` — the split between "HTTP/template" and "engine core" is a file boundary, not just a diagram.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -184,6 +211,7 @@ Work from launch to observability:
 - **Using `/v1/completions` and wondering where the chat formatting went.** `/v1/completions` is **raw** text — it does *not* apply the chat template. Role messages and system prompts only work through **`/v1/chat/completions`**. Sending a bare instruction to `/completions` skips the template the model was tuned for and quality drops.
 - **Blaming FastAPI for latency.** The HTTP frontend is microseconds of overhead. If p99 latency is bad, it's the engine queue (too many concurrent requests for `--max-num-seqs`, or prefill starving decode) — go [measure the knee](load-testing-knee.md), don't profile uvicorn.
 - **Load-balancer / proxy buffering that breaks streaming.** An intermediate proxy (nginx, some cloud LBs) that **buffers** responses will collect all SSE events and deliver them at once — killing the token-by-token effect and inflating perceived TTFT. Disable response buffering for the streaming route.
+- **Expecting the chat template to apply everywhere.** The template is applied *inside* `OpenAIServingChat` (`chat_completion/serving.py`), **not** in `OpenAIServingCompletion` — they're different classes behind different routes. So `/v1/chat/completions` frames your role messages with the model's turn markers, while `/v1/completions` passes text through untouched. Sending chat-style input to `/v1/completions` doesn't error; it just silently skips the template the instruct model expects.
 
 ## 7 · Interview links
 
@@ -198,6 +226,7 @@ Further reading:
 - vLLM `docs/serving/openai_compatible_server.md` — the full endpoint list, request fields, and sampling params.
 - vLLM `docs/cli/README.md` — every `vllm serve` flag (host/port/uds, api-key, served-model-name).
 - vLLM `docs/usage/security.md` — the utility endpoints (`/health`, `/ping`, `/version`, `/load`, `/tokenize`) and hardening notes.
+- vLLM source (v0.26.0): [`vllm/entrypoints/openai/api_server.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/api_server.py) (FastAPI app + `EngineDeadError`→503), [`chat_completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/chat_completion/serving.py) (`OpenAIServingChat`, chat template), [`completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/completion/serving.py) (`OpenAIServingCompletion`), [`cli_args.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/cli_args.py) (the flags) — the frontend from §3.5.
 - The [vLLM architecture map](../part5/vllm-architecture-map.md) — what the "engine core" behind this frontend actually does.
 - The [next lesson](load-testing-knee.md) — turning this server into a measured throughput curve.
 

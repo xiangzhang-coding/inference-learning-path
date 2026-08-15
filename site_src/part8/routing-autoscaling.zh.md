@@ -37,6 +37,20 @@
    前缀感知:     按缓存前缀路由 → 已有它的副本来服务（缓存命中，跳过 prefill）
 ```
 
+上面的 router/副本拓扑是一张空间布局（ASCII，按 ADR-0005）。而队列信号驱动的*自动扩缩控制回路*是一个流程，故用 Mermaid `flowchart`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+flowchart TB
+    M["read vllm:num_requests_waiting (queue depth)"] --> Q{"queue above threshold?"}
+    Q -->|"yes"| UP["scale up: add replica<br/>(cold-start lag — provision headroom / pre-warm)"]
+    Q -->|"no"| Q2{"queue near 0 and running low?"}
+    Q2 -->|"yes"| DOWN["scale down: drain first<br/>(running AND waiting reach 0), then remove"]
+    Q2 -->|"no"| HOLD["hold N replicas"]
+    UP --> M
+    DOWN --> M
+    HOLD --> M
+```
+
 三个要记住的形状：
 
 - **缓存是每实例的，不共享。** 副本 0 的 prefix cache 与 KV block 对副本 1 不可见。所以你把请求发*去哪*决定它命不命中热缓存。路由因而是个**缓存落点**问题，不只是铺负载。
@@ -69,6 +83,15 @@
 ### 3.4 拼起来
 
 一个生产部署的形状：一个 **router**（前缀感知、模型感知）在一个引擎 pod **Deployment** 前，一个**自动扩缩器**盯 `num_requests_waiting`，`/health` 做存活性、`/metrics` 做负载，以及——可选——**LMCache** 作为共享 KV 层，让跨副本未命中花一次取、而非一次完整 prefill。production stack 把这一切作为一个 Helm chart 发布；你也可以用一个普通负载均衡器 + HPA + 你自己的路由规则拼出来。
+
+### 3.5 在 vLLM 源码里读它（v0.26.0）
+
+本节大部分机制——router、HPA、SkyPilot policy——都住在引擎*之外*（**production stack** 是独立仓库，K8s/Helm 是基础设施）。vLLM 自己提供的、以及在哪，是两样东西（ADR-0002：读懂 + 会推，不重写）：
+
+- **自动扩缩的信号是一个导出的 gauge。** [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) 里的 `PrometheusStatLogger` 在 `/metrics` 上发布 **`vllm:num_requests_waiting`** Gauge（与 `num_requests_running`）。HPA/KEDA 不会窥探 vLLM 内部——它*抓取那个 gauge*。所以「按队列扩缩」其实是「按这一个导出的数扩缩」；引擎唯一的活是诚实上报它。
+- **每实例独立的缓存就是引擎核心。** 每个 `vllm serve` 进程拥有自己的 KV-cache block 池与 [prefix cache](../part5/prefix-caching.md)（[Part 5](../part5/paged-attention.md) 的机制）——vLLM 本身没有跨进程共享，这正是前缀感知路由（一个外部 router 的决策）为何重要。跨副本复用需要外部的 LMCache 层。
+
+读源码时的要点：vLLM 暴露*信号*与*独立缓存*；路由与扩缩的*策略*是刻意放在引擎之外的。从 `loggers.py` 开始，看清你到底能按哪些 gauge 扩缩。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -155,6 +178,7 @@ service:
 - **前缀亲和热点。** 纯前缀感知路由会把一个流行前缀堆到一个副本上、其他闲着。真实 router **揉合**前缀亲和与负载均衡；调这个平衡，别只按前缀路由。
 - **把就绪当 `/health`。** `/health` 是存活性（引擎活着），不是就绪性（现在能服务）。在 `/health` 上就把 pod 加入轮转的负载均衡器，会把流量发给还在加载的引擎。用真实就绪探针（一个极小生成请求），如 §4。
 - **流式穿过一个缓冲的负载均衡器。** 如[server 那节](openai-server.md)，一个缓冲响应的 LB 会把 SSE 流式塌成一个迟到的 chunk。配置 router/LB 不缓冲地透传流式响应。
+- **以为 vLLM 会自己扩缩。** 引擎只*导出* `vllm:num_requests_waiting`（经 `PrometheusStatLogger`，`vllm/v1/metrics/loggers.py`）；它不路由、不扩缩、不拉副本。在你把外部抓取器（Prometheus）→ 外部控制器（HPA/KEDA/SkyPilot）→ 副本数这条链接好之前，什么都不会自动扩缩。忘了这一半的回路是*你的*基础设施——以及这个 gauge 是*每实例*的、所以 HPA 必须跨 pod 聚合（`AverageValue`）——正是「我把 `num_requests_waiting` 设成 metric 了但没扩缩」的由来。
 
 ## 7 · 面试连线
 
@@ -170,6 +194,7 @@ service:
 - vLLM `docs/serving/data_parallel_deployment.md` —— 为何每引擎独立 KV cache 让智能路由划算。
 - vLLM `docs/deployment/frameworks/skypilot.md` —— `replica_policy` / `target_qps_per_replica` 自动扩缩与就绪探针。
 - vLLM `docs/design/metrics.md` —— 你用来路由与扩缩的 `vllm:num_requests_waiting` 与 prefix-cache 命中/总数计数器。
+- vLLM 源码（v0.26.0）：[`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py)（`PrometheusStatLogger` → autoscaler 抓取的 `vllm:num_requests_waiting` / `num_requests_running` gauge）——§3.5 的导出信号。（router、HPA、SkyPilot policy 是外部 production stack，不在引擎里。）
 - [prefix-caching 那节](../part5/prefix-caching.md) —— 前缀感知路由跨实例保住的那份每实例收益。
 
 ## 9 · 自测小问

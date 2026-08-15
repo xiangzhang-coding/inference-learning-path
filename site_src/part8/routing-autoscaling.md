@@ -37,6 +37,20 @@ A **router** sits in front of N independent engine replicas — *each with its o
    PREFIX-AWARE: route by cached prefix → the replica that has it serves it (cache HIT, prefill skipped)
 ```
 
+The router/replica topology above is a spatial layout (ASCII per ADR-0005). The *autoscale control loop* the queue signal drives is a process, so Mermaid `flowchart`:
+
+```mermaid
+flowchart TB
+    M["read vllm:num_requests_waiting (queue depth)"] --> Q{"queue above threshold?"}
+    Q -->|"yes"| UP["scale up: add replica<br/>(cold-start lag — provision headroom / pre-warm)"]
+    Q -->|"no"| Q2{"queue near 0 and running low?"}
+    Q2 -->|"yes"| DOWN["scale down: drain first<br/>(running AND waiting reach 0), then remove"]
+    Q2 -->|"no"| HOLD["hold N replicas"]
+    UP --> M
+    DOWN --> M
+    HOLD --> M
+```
+
 Three shapes to keep:
 
 - **Caches are per-instance, not shared.** Replica 0's prefix cache and KV blocks are invisible to replica 1. So *where* you send a request determines whether it hits a warm cache. Routing is therefore a **cache-placement** problem, not just a load-spreading one.
@@ -69,6 +83,15 @@ Two operational realities: **cold start** — a new replica must load weights an
 ### 3.4 Putting it together
 
 The shape of a production deployment: a **router** (prefix-aware, model-aware) in front of a **Deployment** of engine pods, an **autoscaler** watching `num_requests_waiting`, `/health` for liveness and `/metrics` for load, and — optionally — **LMCache** as a shared KV tier so cache misses across replicas cost a fetch, not a full prefill. The production stack ships all of this as a Helm chart; you can also assemble it from a plain load balancer + HPA + your own routing rule.
+
+### 3.5 Reading it in vLLM's source (v0.26.0)
+
+Most of this lesson's machinery — the router, the HPA, the SkyPilot policy — lives *outside* the engine (the **production stack** is a separate repo, K8s/Helm is infra). What vLLM itself provides, and where, is two things (ADR-0002: read + reason, don't rewrite):
+
+- **The autoscaling signal is an exported gauge.** `PrometheusStatLogger` in [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) publishes the **`vllm:num_requests_waiting`** Gauge (and `num_requests_running`) on `/metrics`. The HPA/KEDA doesn't peek inside vLLM — it *scrapes that gauge*. So "autoscale on the queue" is really "scale on this one exported number"; the engine's only job is to report it honestly.
+- **The independent per-instance cache is the engine core.** Each `vllm serve` process owns its own KV-cache block pool and [prefix cache](../part5/prefix-caching.md) (the [Part 5](../part5/paged-attention.md) machinery) — there is no cross-process sharing in vLLM itself, which is *why* prefix-aware routing (an external router decision) matters. Cross-replica reuse needs the external LMCache tier.
+
+The takeaway when reading: vLLM exposes the *signal* and the *independent cache*; the routing and scaling *policy* are deliberately outside the engine. Start at `loggers.py` to see exactly which gauges you get to scale on.
 
 ## 4 · Complete runnable code + line-by-line
 
@@ -156,6 +179,7 @@ Steps:
 - **Prefix-affinity hotspots.** Pure prefix-aware routing can pile a popular prefix onto one replica while others idle. Real routers **blend** prefix-affinity with load-balancing; tune the balance, don't route on prefix alone.
 - **Readiness = `/health`.** `/health` is liveness (engine alive), not readiness (can serve now). Load balancers that add a pod to rotation on `/health` send traffic to a still-loading engine. Use a real readiness probe (a tiny generation request), as in §4.
 - **Streaming through a buffering load balancer.** As in the [server lesson](openai-server.md), an LB that buffers responses collapses SSE streaming into one late chunk. Configure the router/LB to pass streaming responses through unbuffered.
+- **Expecting vLLM to autoscale itself.** The engine only *exports* `vllm:num_requests_waiting` via `PrometheusStatLogger` (`vllm/v1/metrics/loggers.py`); it does not route, scale, or spawn replicas. Nothing autoscales until you wire an external scraper (Prometheus) → an external controller (HPA/KEDA/SkyPilot) → the replica count. Forgetting that half the loop is *your* infra — and that the gauge is *per-instance*, so the HPA must aggregate across pods (`AverageValue`) — is why "I set `num_requests_waiting` as the metric but nothing scaled" happens.
 
 ## 7 · Interview links
 
@@ -171,6 +195,7 @@ Further reading:
 - vLLM `docs/serving/data_parallel_deployment.md` — why independent per-engine KV caches make intelligent routing pay off.
 - vLLM `docs/deployment/frameworks/skypilot.md` — `replica_policy` / `target_qps_per_replica` autoscaling and readiness probes.
 - vLLM `docs/design/metrics.md` — `vllm:num_requests_waiting` and the prefix-cache hit/total counters you route and scale on.
+- vLLM source (v0.26.0): [`vllm/v1/metrics/loggers.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/v1/metrics/loggers.py) (`PrometheusStatLogger` → the `vllm:num_requests_waiting` / `num_requests_running` gauges the autoscaler scrapes) — the exported signal from §3.5. (The router, HPA, and SkyPilot policy are the external production stack, not the engine.)
 - The [prefix-caching lesson](../part5/prefix-caching.md) — the per-instance win that prefix-aware routing preserves across instances.
 
 ## 9 · Self-check

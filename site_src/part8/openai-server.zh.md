@@ -39,6 +39,23 @@ vLLM 的 server 说 **OpenAI API**。就这一个决定，让 vLLM 极易上手�
               --max-model-len  --gpu-memory-utilization           ← 设你要测的天花板
 ```
 
+上面的前端/后端划分是一张拓扑（ASCII，按 ADR-0005）。而一条请求穿过这两半的*生命周期*是一次交互，故用 Mermaid `sequenceDiagram`（图内标签按 ADR-0005 保持英文）：
+
+```mermaid
+sequenceDiagram
+    participant C as Client (openai SDK)
+    participant S as API server (FastAPI)
+    participant E as Engine core (scheduler + workers)
+    C->>S: POST /v1/chat/completions (Bearer key, stream=true)
+    Note over S: auth, validate, apply chat template
+    S->>E: add request to the running batch
+    E->>E: continuous batching — prefill then decode
+    E-->>S: first token (at ~TTFT)
+    S-->>C: SSE data chunk
+    E-->>S: next tokens (paced by TPOT)
+    S-->>C: SSE data chunks ... then data [DONE]
+```
+
 三个要记住的形状：
 
 - **server 是前端；引擎是后端。** HTTP 层便宜、近乎无状态（鉴权、JSON 解析、chat-template 渲染、SSE 流式）。昂贵、有状态的部分——KV cache、运行中的 batch——住在引擎核心。延迟飙升时，几乎从不是 FastAPI 层；是 scheduler 前面的队列（[下一节](load-testing-knee.md)）。
@@ -91,6 +108,16 @@ vllm serve Qwen/Qwen2.5-7B-Instruct --host 0.0.0.0 --port 8000
 - **`--gpu-memory-utilization`** —— vLLM 可占的 VRAM 比例；越大 → KV-cache block pool 越大 → 并发越高。
 
 这四个设一个实例的**天花板**。[下一节](load-testing-knee.md)完全在讲*测*天花板在哪；再下一节讲靠多开实例*抬高*它。
+
+### 3.5 在 vLLM 源码里读它（v0.26.0）
+
+「引擎核心之上的一层薄前端」就是实打实的文件布局（ADR-0002：读懂 + 会推，不重写）：
+
+- **前端**是 [`vllm/entrypoints/openai/api_server.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/api_server.py)——挂载路由并流式 SSE 的 FastAPI app。它注册了一个 `EngineDeadError` 异常处理器，这正是引擎死掉时 **`/health`** 返回 503 的机制（§2）。
+- **每个 endpoint 都是一个 serving handler。** `/v1/chat/completions` → **`OpenAIServingChat`**（[`chat_completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/chat_completion/serving.py)）——注意它的 `chat_template` 构造参数：这就是*应用 chat template* 的类（§3.2）。`/v1/completions` → **`OpenAIServingCompletion`**（[`completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/completion/serving.py)）——原始文本，不套模板。`/v1/models` → **`OpenAIServingModels`**（[`models/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/models/serving.py)）。
+- **接口 flag**（`--api-key`、`--served-model-name`、`--host`/`--port`）定义在 [`vllm/entrypoints/openai/cli_args.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/cli_args.py)。
+
+先打开 `api_server.py`，再跳到 `chat_completion/serving.py`——「HTTP/模板」与「引擎核心」的划分是一条文件边界，不只是一张图。
 
 ## 4 · 完整可跑代码 + 逐行讲解
 
@@ -184,6 +211,7 @@ curl -s http://localhost:8000/metrics | grep -E "num_requests_(running|waiting)"
 - **用 `/v1/completions` 却纳闷 chat 格式去哪了。** `/v1/completions` 是**纯**文本——它*不*套 chat template。角色消息与 system prompt 只在 **`/v1/chat/completions`** 上有效。把裸指令发给 `/completions` 会跳过模型被调过的模板，质量下降。
 - **把延迟怪到 FastAPI。** HTTP 前端是微秒级开销。若 p99 延迟差，那是引擎队列（并发超过 `--max-num-seqs`，或 prefill 饿死 decode）——去[测 knee](load-testing-knee.md)，别 profile uvicorn。
 - **负载均衡/代理缓冲破坏流式。** 中间代理（nginx、部分云 LB）若**缓冲**响应，会把所有 SSE 事件收齐后一次发出——毁掉逐字效果、抬高感知 TTFT。给流式路由关掉响应缓冲。
+- **以为 chat template 到处都套。** 模板是*在* `OpenAIServingChat`（`chat_completion/serving.py`）*内部*套的，**不在** `OpenAIServingCompletion` 里——它们是不同路由后的不同类。所以 `/v1/chat/completions` 会用模型的 turn marker 框住你的 role messages，而 `/v1/completions` 原样透传文本。把 chat 风格的输入发给 `/v1/completions` 不会报错；它只是悄悄跳过了 instruct 模型期望的模板。
 
 ## 7 · 面试连线
 
@@ -198,6 +226,7 @@ curl -s http://localhost:8000/metrics | grep -E "num_requests_(running|waiting)"
 - vLLM `docs/serving/openai_compatible_server.md` —— 完整 endpoint 列表、请求字段、采样参数。
 - vLLM `docs/cli/README.md` —— 每个 `vllm serve` flag（host/port/uds、api-key、served-model-name）。
 - vLLM `docs/usage/security.md` —— 工具 endpoint（`/health`、`/ping`、`/version`、`/load`、`/tokenize`）与加固说明。
+- vLLM 源码（v0.26.0）：[`vllm/entrypoints/openai/api_server.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/api_server.py)（FastAPI app + `EngineDeadError`→503）、[`chat_completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/chat_completion/serving.py)（`OpenAIServingChat`、chat template）、[`completion/serving.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/completion/serving.py)（`OpenAIServingCompletion`）、[`cli_args.py`](https://github.com/vllm-project/vllm/blob/v0.26.0/vllm/entrypoints/openai/cli_args.py)（各 flag）——§3.5 的前端。
 - [vLLM 架构地图](../part5/vllm-architecture-map.md) —— 这个前端背后的「引擎核心」到底干什么。
 - [下一节](load-testing-knee.md) —— 把这个 server 变成一条测出来的吞吐曲线。
 
