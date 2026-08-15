@@ -28,7 +28,6 @@ nav:
       - "GPU Hardware Mental Model": part0/gpu-hardware.md
       - "Inference Performance Metrics": part0/metrics.md
       - "Number Formats: FP16 to INT4": part0/number-formats.md
-  - "Part 1 · Transformer (Infra View)": part1/index.md
   - "Part 2 · Single-GPU Inference Performance":
       - part2/index.md
       - "Operator Roofline: GEMM & Attention Intensity": part2/roofline-analysis.md
@@ -179,7 +178,6 @@ plugins:
             "GPU Hardware Mental Model": "GPU 硬件心智模型"
             "Inference Performance Metrics": "推理性能度量"
             "Number Formats: FP16 to INT4": "数值格式：FP16 到 INT4"
-            "Part 1 · Transformer (Infra View)": "Part 1 · Transformer（Infra 视角）"
             "Part 2 · Single-GPU Inference Performance": "Part 2 · 单卡推理性能"
             "Operator Roofline: GEMM & Attention Intensity": "算子 Roofline：GEMM 与 Attention 强度"
             "KV Cache Memory Math": "KV 缓存显存数学"

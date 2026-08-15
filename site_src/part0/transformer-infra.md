@@ -74,7 +74,7 @@ $$
 
 **Embedding + LM head:** $V d$ each ($2Vd$ if untied, $Vd$ if tied).
 
-**Prefill FLOPs** follow the standard rule of thumb — a matmul with $P$ weights costs $\approx 2P$ FLOPs per token (one multiply + one add per weight). So per-token forward FLOPs $\approx 2 \times (\text{non-embedding params})$. The **embedding is a lookup (gather), not a matmul → ~0 FLOPs**; the **lm_head is a real matmul → counts.** There's an *additional* attention-score term that scales as $O(S^2)$ over the sequence (the $QK^\top$ and $\cdot V$ matmuls); it's negligible at short context and grows at long context — that's a Part 1 Roofline topic (→ ticket #6).
+**Prefill FLOPs** follow the standard rule of thumb — a matmul with $P$ weights costs $\approx 2P$ FLOPs per token (one multiply + one add per weight). So per-token forward FLOPs $\approx 2 \times (\text{non-embedding params})$. The **embedding is a lookup (gather), not a matmul → ~0 FLOPs**; the **lm_head is a real matmul → counts.** There's an *additional* attention-score term that scales as $O(S^2)$ over the sequence (the $QK^\top$ and $\cdot V$ matmuls); it's negligible at short context and grows at long context — that's a [Roofline](../part2/roofline-analysis.md) topic (Part 2).
 
 **KV cache** reuses the KV Cache lesson's result exactly: $\kappa = 2\,L\,n_{\text{kv}}\,d_h\,b$ bytes/token. The knob here is $n_{\text{kv}}$:
 
@@ -212,7 +212,7 @@ print("head_dim    :", cfg.hidden_size // cfg.num_attention_heads)   # 128
 - **KV size scales with `n_kv × head_dim`, not `num_heads`.** Using query-head count in the KV formula is the classic factor-of-7 error for this model.
 - **MoE total params ≠ active params.** A "57B MoE" may activate only ~14B/token. VRAM tracks total (all experts resident); compute tracks active. Two different columns.
 - **Tied vs untied embeddings.** Qwen2.5-7B is *untied* — embedding and lm_head are separate matrices (~0.55B each). Tying them saves ~0.55B params; assuming the wrong one skews your VRAM estimate.
-- **"2 × params" is a per-token prefill estimate.** It excludes the $O(S^2)$ attention-score FLOPs, which matter only at long context (Part 1).
+- **"2 × params" is a per-token prefill estimate.** It excludes the $O(S^2)$ attention-score FLOPs, which matter only at long context (a Part 2 Roofline topic).
 
 ## 7 · Interview links
 

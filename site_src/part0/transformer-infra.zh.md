@@ -74,7 +74,7 @@ $$
 
 **Embedding + LM head：** 各 $V d$（不共享则 $2Vd$，共享则 $Vd$）。
 
-**Prefill FLOPs** 遵循标准经验法则——一个含 $P$ 权重的矩阵乘，每 token 约 $2P$ FLOPs（每权重一乘一加）。所以每 token 前向 FLOPs $\approx 2 \times$（非 embedding 参数）。**embedding 是查表（gather），不是矩阵乘 → ~0 FLOPs**；**lm_head 是真矩阵乘 → 计入。** 此外还有一项随序列 $O(S^2)$ 增长的注意力分数项（$QK^\top$ 与 $\cdot V$ 矩阵乘）；短上下文可忽略，长上下文才增长——那是 Part 1 Roofline 的话题（→ 票 #6）。
+**Prefill FLOPs** 遵循标准经验法则——一个含 $P$ 权重的矩阵乘，每 token 约 $2P$ FLOPs（每权重一乘一加）。所以每 token 前向 FLOPs $\approx 2 \times$（非 embedding 参数）。**embedding 是查表（gather），不是矩阵乘 → ~0 FLOPs**；**lm_head 是真矩阵乘 → 计入。** 此外还有一项随序列 $O(S^2)$ 增长的注意力分数项（$QK^\top$ 与 $\cdot V$ 矩阵乘）；短上下文可忽略，长上下文才增长——那是 [Roofline](../part2/roofline-analysis.md) 的话题（Part 2）。
 
 **KV 缓存** 直接沿用 KV 缓存课的结论：$\kappa = 2\,L\,n_{\text{kv}}\,d_h\,b$ 字节/token。这里的旋钮是 $n_{\text{kv}}$：
 
@@ -211,7 +211,7 @@ print("head_dim    :", cfg.hidden_size // cfg.num_attention_heads)   # 128
 - **KV 大小按 `n_kv × head_dim` 缩放，不是 `num_heads`。** 在 KV 公式里用 query 头数，是本模型经典的「差 7 倍」错误。
 - **MoE 总参数 ≠ 激活参数。** 一个「57B MoE」可能每 token 只激活 ~14B。VRAM 跟总量走（全部专家驻留）；算力跟激活走。两个不同的列。
 - **共享 vs 不共享 embedding。** Qwen2.5-7B *不共享*——embedding 与 lm_head 是两个独立矩阵（各 ~0.55B）。共享能省 ~0.55B 参数；搞错会让 VRAM 估算偏。
-- **「2 × 参数」是每 token prefill 估算。** 它不含 $O(S^2)$ 的注意力分数 FLOPs，那只在长上下文才重要（Part 1）。
+- **「2 × 参数」是每 token prefill 估算。** 它不含 $O(S^2)$ 的注意力分数 FLOPs，那只在长上下文才重要（Part 2 Roofline 话题）。
 
 ## 7 · 面试连线
 
