@@ -17,12 +17,13 @@
 - **Recompute（重算）**——丢弃被驱逐的 KV；序列恢复时重跑 prefill、重建 KV。代价 = 重算 FLOPs；**无 CPU 传输**。
 - **Swap（换出/换入）**——把被驱逐的 KV 拷到 CPU 内存（swap space），恢复时再拷回。代价 = PCIe **来回**传输；需要 `swap_space`。
 
-**vLLM V1（0.26.0 的默认引擎）默认用 `RECOMPUTE`**——开销低于 swap。事实上 V1 **移除了 swap**：`--swap-space` flag 已去除，换出相关的指标（`vllm:num_requests_swapped`、`vllm:cpu_cache_usage_perc`）在 V1 已不再相关；**prefix caching** 通过复用已缓存的 block，给了重算一条近乎零开销的路径。你会以日志警告的形式看到抢占：
+**vLLM V1（0.26.0 的默认引擎）默认用 `RECOMPUTE`**——开销低于 swap。事实上 V1 **移除了 swap**：`--swap-space` flag 已去除，换出相关的指标（`vllm:num_requests_swapped`、`vllm:cpu_cache_usage_perc`）在 V1 已不再相关；**prefix caching** 通过复用已缓存的 block，给了重算一条近乎零开销的路径。你通过 Prometheus 计数器 **`vllm:num_preemptions`** 观测抢占（自启动累计；用 `disable_log_stats=false` 开启统计）：
 
 ```text
-WARNING scheduler.py Sequence group N is preempted by PreemptionMode.RECOMPUTE
-mode because there is not enough KV cache space. ... total_cumulative_preemption_cnt=1
+vllm:num_preemptions   # 自启动以来的累计抢占数（Prometheus 计数器）
 ```
+
+（V1 不再逐次打印警告：V0 那条 `WARNING ... Sequence group ... PreemptionMode.RECOMPUTE ... total_cumulative_preemption_cnt` 已移除——别去 grep 它。）
 
 ### 深入原理
 
@@ -64,7 +65,7 @@ print(run(pool_blocks=4, arrivals=list(range(6)), blocks_per_req=2))  # 示例
 - *「累计抢占计数在涨——你改什么？」* → 改容量，不是调度器：↑ `gpu_memory_utilization`、量化 / FP8 KV、↓ `max_num_seqs` / `max_num_batched_tokens`，或 ↑ TP/PP。
 - *「抢占和 OOM 一样吗？」* → 不一样。抢占是优雅的（驱逐 + 恢复，代价是延迟）；OOM 会崩掉引擎。抢占正是防止在 KV 压力下崩溃。
 - *「prefix caching 如何与重算配合？」* → 被重算的序列能命中 prefix cache，于是「重算」往往近乎免费——这也是 V1 能去掉 swap 的原因之一。
-- *「什么指标能看出它在发生？」* → 累计抢占计数（Prometheus 指标，或 `disable_log_stats=false`）以及 `PreemptionMode.RECOMPUTE` 警告。
+- *「什么指标能看出它在发生？」* → `vllm:num_preemptions` 这个 Prometheus 计数器在涨（或用 `disable_log_stats=false` 观测）——V1 已不再逐次打印警告。
 
 ### 关联概念
 

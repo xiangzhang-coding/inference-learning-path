@@ -17,12 +17,13 @@ Two classic recovery modes on resume:
 - **Recompute** — discard the evicted KV; when the sequence resumes, re-run prefill over its tokens to rebuild the KV. Cost = recompute FLOPs; **no CPU transfer**.
 - **Swap** — copy the evicted KV out to CPU RAM (swap space) and copy it back on resume. Cost = PCIe transfer **both ways**; needs a `swap_space`.
 
-**vLLM V1 (the 0.26.0 default engine) uses `RECOMPUTE` by default** — lower overhead than swap. In fact V1 **removed swap**: the `--swap-space` flag is gone and the swapped-preemption metrics (`vllm:num_requests_swapped`, `vllm:cpu_cache_usage_perc`) are no longer relevant; **prefix caching** gives recompute a near-zero-overhead path by reusing already-cached blocks. You observe preemption as a log warning:
+**vLLM V1 (the 0.26.0 default engine) uses `RECOMPUTE` by default** — lower overhead than swap. In fact V1 **removed swap**: the `--swap-space` flag is gone and the swapped-preemption metrics (`vllm:num_requests_swapped`, `vllm:cpu_cache_usage_perc`) are no longer relevant; **prefix caching** gives recompute a near-zero-overhead path by reusing already-cached blocks. You observe preemption through the Prometheus counter **`vllm:num_preemptions`** (cumulative since startup; enable stats with `disable_log_stats=false`):
 
 ```text
-WARNING scheduler.py Sequence group N is preempted by PreemptionMode.RECOMPUTE
-mode because there is not enough KV cache space. ... total_cumulative_preemption_cnt=1
+vllm:num_preemptions   # cumulative preemptions since startup (Prometheus counter)
 ```
+
+(V1 emits no per-event warning — the old V0 `WARNING ... Sequence group ... PreemptionMode.RECOMPUTE ... total_cumulative_preemption_cnt` line is gone, so don't grep for it.)
 
 ### Deep dive
 
@@ -64,7 +65,7 @@ print(run(pool_blocks=4, arrivals=list(range(6)), blocks_per_req=2))  # 示例
 - *"Cumulative preemption count is climbing — what do you change?"* → Capacity, not the scheduler: ↑ `gpu_memory_utilization`, quantize / FP8 KV, ↓ `max_num_seqs` / `max_num_batched_tokens`, or ↑ TP/PP.
 - *"Is preemption the same as OOM?"* → No. Preemption is graceful (evict + resume, latency cost); OOM crashes the engine. Preemption is what prevents the crash under KV pressure.
 - *"How does prefix caching interact with recompute?"* → A recomputed sequence can hit the prefix cache, so the "recompute" is often near-free — part of why V1 could drop swap.
-- *"What tells you it's happening?"* → The cumulative preemption count (Prometheus metrics, or `disable_log_stats=false`) and the `PreemptionMode.RECOMPUTE` warning.
+- *"What tells you it's happening?"* → The `vllm:num_preemptions` Prometheus counter climbing (or watch it via `disable_log_stats=false`) — V1 no longer prints a per-preemption warning.
 
 ### Linked concepts
 
